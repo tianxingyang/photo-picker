@@ -1,0 +1,42 @@
+# Node / Vite
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Rust
+src-tauri/target/
+
+# Python
+python/.venv/
+python/__pycache__/
+python/**/__pycache__/
+python/*.egg-info/
+python/build/
+python/dist/
+python/.pytest_cache/
+python/.ruff_cache/
+
+# Sidecar binary output
+src-tauri/binaries/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local app caches
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+thumbnails/
+
+# AI tool local-only state
+.claude/settings.local.json
