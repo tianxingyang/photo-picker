@@ -1,5 +1,24 @@
+# Build outputs
 node_modules/
 dist/
 src-tauri/target/
-python/
+src-tauri/gen/
+src-tauri/icons/
+package-lock.json
 *.lock
+
+# Out-of-scope languages (have their own formatter)
+python/
+
+# Repo docs are hand-curated; do not reformat
+*.md
+LICENSE
+
+# AI tooling (managed by their own tools)
+.trellis/
+.opencode/
+.claude/
+.cursor/
+.codex/
+.agents/
+

@@ -1,0 +1,9 @@
+[project]
+name = "photo-picker-sidecar"
+version = "0.0.0"
+description = "Photo Picker analysis sidecar"
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = []

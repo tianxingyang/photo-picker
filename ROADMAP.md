@@ -4,9 +4,9 @@
 
 - [x] 技术选型确认
 - [x] 约束文件与文档（README / ARCHITECTURE / ROADMAP / 各 formatter）
-- [ ] Tauri 2 + React + TS 工程骨架可启动
-- [ ] Rust 主进程能调起 Python sidecar 跑通一次 echo
-- [ ] SQLite 建库 + 初始 migration
+- [x] Tauri 2 + React + TS 工程骨架可启动
+- [x] Rust 主进程能调起 Python sidecar 跑通一次 echo
+- [x] SQLite 建库 + 初始 migration
 
 ## Milestone 1 — MVP（用户已锁定的 9 项功能）
 
