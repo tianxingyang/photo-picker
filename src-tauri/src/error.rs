@@ -4,12 +4,18 @@ use std::fmt;
 #[serde(tag = "kind", content = "message")]
 pub enum AppError {
     Sidecar(String),
+    Db(String),
+    Io(String),
+    NotFound(String),
 }
 
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Sidecar(m) => write!(f, "Sidecar: {m}"),
+            Self::Db(m) => write!(f, "Db: {m}"),
+            Self::Io(m) => write!(f, "Io: {m}"),
+            Self::NotFound(m) => write!(f, "NotFound: {m}"),
         }
     }
 }

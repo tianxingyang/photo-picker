@@ -23,3 +23,10 @@ tokio = { version = "1", features = [
     "time",
 ] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+tauri-plugin-dialog = "2"
+walkdir = "2"
+blake3 = "1"
+time = { version = "0.3", features = ["formatting"] }
+
+[dev-dependencies]
+tempfile = "3"
