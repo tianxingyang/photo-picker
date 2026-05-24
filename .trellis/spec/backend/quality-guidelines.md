@@ -25,6 +25,7 @@ Covers Rust main process and Python sidecar.
 - `println!` in Rust prod code. Use the logging library. Allowed in `examples/` or one-shot CLI tools.
 - `print()` in Python prod code — **breaks IPC** (corrupts stdout). Use `logging` writing to stderr.
 - Blocking I/O inside async commands without `spawn_blocking`.
+- Holding a `Mutex` over a shared async resource across `.await` on its long-running op (sidecar RPC, network, child-process call). Use `tokio::sync::Mutex<Option<Arc<T>>>` for the slot and clone the `Arc` out under a brief lock; the inner `T` must be internally `Sync` so concurrent calls aren't serialized by the outer guard. Applies to the sidecar wrapper and any future analyzer pool / model loader. `tokio::sync::Mutex<Connection>` is fine because the lock is released into `spawn_blocking` immediately.
 - Schema changes without a migration file.
 - `unsafe` Rust without a `// SAFETY:` comment justifying the invariant.
 

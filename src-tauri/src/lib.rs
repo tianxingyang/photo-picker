@@ -3,15 +3,21 @@ mod db;
 mod error;
 mod sidecar;
 
-use std::sync::Mutex;
+use std::sync::Arc;
 
 use rusqlite::Connection;
 use tauri::Manager;
+use tokio::sync::Mutex;
 
 use crate::sidecar::Sidecar;
 
 pub struct AppState {
-    pub sidecar: tokio::sync::Mutex<Option<Sidecar>>,
+    // why: Arc lets command handlers clone-and-release the outer lock instantly
+    // so concurrent RPCs aren't serialized behind a single in-flight call.
+    pub sidecar: Mutex<Option<Arc<Sidecar>>>,
+    // why: async Mutex so future #[tauri::command] async fns don't block the
+    // tokio worker on a sync lock. DB calls themselves should be wrapped in
+    // tauri::async_runtime::spawn_blocking when they land.
     pub _db: Mutex<Connection>,
 }
 
@@ -23,14 +29,14 @@ pub fn run() {
             db::run_migrations(&conn).map_err(boxed)?;
 
             app.manage(AppState {
-                sidecar: tokio::sync::Mutex::new(None),
+                sidecar: Mutex::new(None),
                 _db: Mutex::new(conn),
             });
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let sidecar = match Sidecar::spawn_dev().await {
-                    Ok(s) => Some(s),
+                    Ok(s) => Some(Arc::new(s)),
                     Err(e) => {
                         eprintln!("sidecar spawn failed: {e}");
                         None

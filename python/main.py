@@ -19,18 +19,20 @@ OPS: dict[str, Callable[[dict], dict]] = {
 
 
 def handle(line: str) -> dict[str, Any]:
-    req = json.loads(line)
-    req_id = req.get("id")
-    op = req.get("op")
-    payload = req.get("payload", {}) or {}
-
-    fn = OPS.get(op)
-    if fn is None:
-        return {"id": req_id, "error": f"unknown op: {op}"}
-
+    req_id: Any = None
     try:
+        req = json.loads(line)
+        req_id = req.get("id")
+        op = req.get("op")
+        payload = req.get("payload", {}) or {}
+
+        fn = OPS.get(op)
+        if fn is None:
+            return {"id": req_id, "error": f"unknown op: {op}"}
+
         return {"id": req_id, "result": fn(payload)}
     except Exception as e:
+        # why: keep the sidecar alive on any single-line failure
         return {"id": req_id, "error": f"{type(e).__name__}: {e}"}
 
 

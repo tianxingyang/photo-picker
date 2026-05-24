@@ -34,6 +34,7 @@
 - Direct `@tauri-apps/api` imports outside `src/api/`.
 - Raw OS paths in component props or `<img>` src — must go through `convertFileSrc` in `api/`.
 - `useEffect` whose dependency is an unstable function: either wrap with `useCallback` or move the function inside the effect body.
+- `String(e)` on a Tauri `invoke()` rejection. Per `backend/error-handling.md`, the error arrives as a structured `{ kind, message }` object, so `String(e)` yields `"[object Object]"`. Extract `.message` (and branch on `.kind` when there are multiple variants) explicitly — see `src/App.tsx::describeError` for the canonical shape-checking helper.
 
 ---
 

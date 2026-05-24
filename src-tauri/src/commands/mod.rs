@@ -9,10 +9,14 @@ pub async fn echo_via_sidecar(
     text: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    let guard = state.sidecar.lock().await;
-    let sidecar = guard.as_ref().ok_or_else(|| {
-        AppError::Sidecar("not started; check that uv and python are on PATH".into())
-    })?;
+    // why: clone the Arc under a brief lock so the outer Mutex is released
+    // before the RPC await — concurrent calls can then overlap.
+    let sidecar = {
+        let guard = state.sidecar.lock().await;
+        guard.as_ref().cloned().ok_or_else(|| {
+            AppError::Sidecar("not started; check that uv and python are on PATH".into())
+        })?
+    };
 
     let result = sidecar
         .call("echo", json!({ "text": text }))

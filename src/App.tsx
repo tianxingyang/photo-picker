@@ -1,6 +1,21 @@
 import { useState } from "react";
 import { echo } from "./api/echo";
 
+// why: Tauri rejects invoke() with the serialized Rust error object
+// ({kind, message} for AppError), so String(e) yields "[object Object]".
+function describeError(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object" && "message" in e) {
+    const m = (e as { message: unknown }).message;
+    if (typeof m === "string") return m;
+  }
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
 export function App() {
   const [text, setText] = useState("hello sidecar");
   const [reply, setReply] = useState<string | null>(null);
@@ -12,7 +27,7 @@ export function App() {
       const r = await echo(text);
       setReply(`sidecar replied: ${r}`);
     } catch (e) {
-      setReply(`error: ${String(e)}`);
+      setReply(`error: ${describeError(e)}`);
     } finally {
       setBusy(false);
     }

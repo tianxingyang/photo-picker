@@ -6,6 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+// why: first `uv run` on a clean machine sets up the venv and resolves deps,
+// which routinely takes 10-20s. 5s would fire before python ever starts.
+const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -113,13 +117,13 @@ impl Sidecar {
             return Err(e);
         }
 
-        match tokio::time::timeout(Duration::from_secs(5), rx).await {
+        match tokio::time::timeout(CALL_TIMEOUT, rx).await {
             Ok(Ok(Ok(v))) => Ok(v),
             Ok(Ok(Err(e))) => Err(e.into()),
             Ok(Err(_)) => Err("sidecar reader dropped".into()),
             Err(_) => {
                 self.pending.lock().await.remove(&id);
-                Err("sidecar timeout (5s)".into())
+                Err(format!("sidecar timeout ({}s)", CALL_TIMEOUT.as_secs()).into())
             }
         }
     }
@@ -134,7 +138,13 @@ impl Sidecar {
 }
 
 fn python_dir() -> Result<PathBuf, SideErr> {
+    // why: CARGO_MANIFEST_DIR is a build-machine path. spawn_dev only works
+    // when running from the source tree (cargo tauri dev). Release bundles
+    // must ship a sidecar binary (planned for M1+).
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let dir = PathBuf::from(manifest_dir).join("..").join("python");
-    Ok(dir.canonicalize()?)
+    dir.canonicalize().map_err(|e| {
+        format!("spawn_dev expects {dir:?} to exist (dev only; bundled sidecar lands in M1+): {e}")
+            .into()
+    })
 }
