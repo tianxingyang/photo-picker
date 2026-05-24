@@ -1,0 +1,8 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "ARCHITECTURE.md", "reason": "导入数据流 + IPC 边界事实源"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "scanner/ commands/ db/ 模块边界"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "rusqlite/spawn_blocking/prepared/事务/migration 规则"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError 边界与 kind 契约"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "api/ 唯一 tauri 入口、types/ 位置、convertFileSrc 规则"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "严格 TS、品牌类型、边界校验(类型共享 OPEN)"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand store/selector/optimistic 约定"}

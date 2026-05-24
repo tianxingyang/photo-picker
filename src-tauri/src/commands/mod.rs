@@ -1,3 +1,5 @@
+pub mod photos;
+
 use serde_json::json;
 use tauri::State;
 

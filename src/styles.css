@@ -20,6 +20,16 @@ main {
 .row {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+.photo-list {
+  margin-top: 16px;
+  padding-left: 20px;
+  max-height: 60vh;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
 }
 
 input {

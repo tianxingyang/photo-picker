@@ -1,33 +1,34 @@
 import { useState } from "react";
-import { echo } from "./api/echo";
 
-// why: Tauri rejects invoke() with the serialized Rust error object
-// ({kind, message} for AppError), so String(e) yields "[object Object]".
-function describeError(e: unknown): string {
-  if (typeof e === "string") return e;
-  if (e && typeof e === "object" && "message" in e) {
-    const m = (e as { message: unknown }).message;
-    if (typeof m === "string") return m;
-  }
-  try {
-    return JSON.stringify(e);
-  } catch {
-    return String(e);
-  }
-}
+import { pickFolder } from "./api/dialogApi";
+import { scanFolder } from "./api/photosApi";
+import { usePhotosStore } from "./store/photosStore";
+import { describeAppError } from "./types/ipc";
 
 export function App() {
-  const [text, setText] = useState("hello sidecar");
-  const [reply, setReply] = useState<string | null>(null);
+  const order = usePhotosStore((s) => s.order);
+  const byId = usePhotosStore((s) => s.byId);
+  const addPhotos = usePhotosStore((s) => s.addPhotos);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  async function onEcho() {
+  async function onImport() {
+    // why: set busy before the (slow) picker await so a second click can't
+    // open a second dialog and launch a concurrent scan; finally always resets.
+    if (busy) return;
+    setError(null);
+    setNotice(null);
     setBusy(true);
     try {
-      const r = await echo(text);
-      setReply(`sidecar replied: ${r}`);
+      const folder = await pickFolder();
+      if (folder === null) return;
+      const { photos, skipped } = await scanFolder(folder);
+      addPhotos(photos);
+      if (skipped > 0) setNotice(`${skipped} 项无法读取，已跳过`);
     } catch (e) {
-      setReply(`error: ${describeError(e)}`);
+      const { kind, message } = describeAppError(e);
+      setError(kind === "NotFound" ? `目录无效：${message}` : `导入失败：${message}`);
     } finally {
       setBusy(false);
     }
@@ -35,15 +36,21 @@ export function App() {
 
   return (
     <main>
-      <h1>Photo Picker — M0</h1>
-      <p>Rust ↔ Python sidecar echo test.</p>
+      <h1>Photo Picker</h1>
       <div className="row">
-        <input value={text} onChange={(e) => setText(e.target.value)} />
-        <button onClick={onEcho} disabled={busy}>
-          {busy ? "..." : "Echo"}
+        <button onClick={onImport} disabled={busy}>
+          {busy ? "导入中…" : "导入文件夹"}
         </button>
+        <span>已导入 {order.length} 张</span>
       </div>
-      {reply !== null && <p className="reply">{reply}</p>}
+      {error !== null && <p className="reply">{error}</p>}
+      {notice !== null && <p className="reply">{notice}</p>}
+      <ul className="photo-list">
+        {order.map((id) => {
+          const p = byId[id];
+          return p ? <li key={id}>{p.name}</li> : null;
+        })}
+      </ul>
     </main>
   );
 }
