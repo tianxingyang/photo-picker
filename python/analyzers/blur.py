@@ -25,7 +25,9 @@ def score(gray: np.ndarray, threshold: float = constants.BLUR_VAR_THRESHOLD) -> 
     """Return (blur_score, is_blurry).
 
     blur_score is the variance of the Laplacian: high for sharp images, low for
-    blurry ones. is_blurry = blur_score < threshold.
+    blurry ones. is_blurry = blur_score < threshold. Images smaller than the
+    3x3 kernel return score 0 and are therefore always flagged blurry — this is
+    intentional; a sub-3px image carries no meaningful sharpness information.
     """
     response = _convolve2d_valid(gray.astype(np.float64), _LAPLACIAN)
     var = float(response.var())

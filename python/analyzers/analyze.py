@@ -25,7 +25,8 @@ def run(payload: dict) -> dict:
     over_mean = float(payload.get("overMean", constants.OVER_MEAN))
     under_mean = float(payload.get("underMean", constants.UNDER_MEAN))
     clip_ratio = float(payload.get("clipRatio", constants.CLIP_RATIO))
-    max_side = int(payload.get("normMaxSide", constants.NORM_MAX_SIDE))
+    # Clamp so a zero/negative override can't collapse the image to a 1x1 sliver.
+    max_side = max(1, int(payload.get("normMaxSide", constants.NORM_MAX_SIDE)))
 
     with Image.open(path) as img:
         img.load()
@@ -47,16 +48,20 @@ def run(payload: dict) -> dict:
 
 
 def _to_gray_ndarray(img: Image.Image, max_side: int) -> np.ndarray:
-    """Downscale so the longest side <= max_side, convert to 8-bit grayscale.
+    """Convert to 8-bit grayscale; downscale if the longest side exceeds max_side.
 
-    Resizing first keeps blur_score comparable across source resolutions.
+    Grayscale conversion happens FIRST so palette ('P') or CMYK images are
+    linearised before BILINEAR resampling — resizing in palette-index space
+    produces garbage pixel values. Images already <= max_side are kept at
+    native resolution (no upscaling); large images are normalized down so
+    blur_score values are comparable to each other across those sizes.
     """
-    resized = img
-    longest = max(img.width, img.height)
+    # Convert to grayscale first so resampling works in luminance space.
+    gray_img = img.convert("L")
+    longest = max(gray_img.width, gray_img.height)
     if longest > max_side and longest > 0:
         scale = max_side / longest
-        new_size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
-        resized = img.resize(new_size, Image.Resampling.BILINEAR)
+        new_size = (max(1, round(gray_img.width * scale)), max(1, round(gray_img.height * scale)))
+        gray_img = gray_img.resize(new_size, Image.Resampling.BILINEAR)
 
-    gray = resized.convert("L")
-    return np.asarray(gray, dtype=np.uint8)
+    return np.asarray(gray_img, dtype=np.uint8)

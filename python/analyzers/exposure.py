@@ -23,10 +23,14 @@ def score(
     """Return (exposure_score, exposure_flag).
 
     exposure_score is the grayscale mean normalized to [0, 1]. The flag is:
-      - "over"  if mean > over_mean OR bright-clipped fraction > clip_ratio
-      - "under" if mean < under_mean OR dark-clipped fraction > clip_ratio
+      - "over"  if mean > over_mean OR bright-clipped fraction >= clip_ratio
+      - "under" if mean < under_mean OR dark-clipped fraction >= clip_ratio
       - "normal" otherwise
     """
+    if gray.size == 0:
+        # Degenerate empty array: no meaningful exposure to measure.
+        return 0.0, "normal"
+
     g = gray.astype(np.float64)
     mean_norm = float(g.mean()) / 255.0
 
@@ -34,9 +38,9 @@ def score(
     bright_frac = float(np.count_nonzero(g >= _BRIGHT_CLIP)) / total
     dark_frac = float(np.count_nonzero(g <= _DARK_CLIP)) / total
 
-    if mean_norm > over_mean or bright_frac > clip_ratio:
+    if mean_norm > over_mean or bright_frac >= clip_ratio:
         flag = "over"
-    elif mean_norm < under_mean or dark_frac > clip_ratio:
+    elif mean_norm < under_mean or dark_frac >= clip_ratio:
         flag = "under"
     else:
         flag = "normal"

@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -5,6 +7,17 @@ use tauri::State;
 
 use crate::error::AppError;
 use crate::AppState;
+
+/// RAII guard for the single-flight `analysis_running` flag. Clearing on Drop
+/// guarantees the flag is reset on every exit path (early return, `?`, break,
+/// panic) so a future analyze_pending run can proceed.
+struct RunGuard<'a>(&'a AtomicBool);
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,9 +42,31 @@ pub struct AnalysisResult {
 /// Analyze every `analysis_state='pending'` photo by dispatching the single
 /// `analyze` op serially through the sidecar, persisting each result before
 /// moving on (incremental: an interruption never loses completed progress).
-/// Idempotent — already-`done` rows are skipped, so a re-run is a no-op.
+///
+/// `failed` counts per-file decode failures only (the op ran but the file was
+/// bad), which are persisted as `analysis_state='failed'`. An infra failure
+/// (sidecar down / timeout / DB error) stops the batch early and leaves the
+/// remaining rows `pending`, so a re-run resumes them — those rows are never
+/// marked `failed`. Already-`done` rows are skipped, so a re-run is a no-op.
+///
+/// Single-flight: a concurrent invocation returns an empty summary immediately
+/// rather than double-processing the same pending rows.
 #[tauri::command]
 pub async fn analyze_pending(state: State<'_, AppState>) -> Result<AnalyzeSummary, AppError> {
+    // why: single-flight — bail out if another run already holds the flag.
+    if state
+        .analysis_running
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        return Ok(AnalyzeSummary {
+            analyzed: 0,
+            failed: 0,
+        });
+    }
+    // RAII: clears analysis_running on every exit path below (including `?`).
+    let _guard = RunGuard(&state.analysis_running);
+
     // why: clone the Arc under a brief lock so the outer Mutex is released
     // before any RPC await — never hold the sidecar guard across .await.
     let sidecar = {
@@ -60,11 +95,15 @@ pub async fn analyze_pending(state: State<'_, AppState>) -> Result<AnalyzeSummar
     let mut analyzed = 0u32;
     let mut failed = 0u32;
     for (id, path) in pending {
-        let outcome = analyze_one(&sidecar, &state, &id, &path).await?;
-        if outcome {
-            analyzed += 1;
-        } else {
-            failed += 1;
+        match analyze_one(&sidecar, &state, &id, &path).await {
+            Ok(true) => analyzed += 1,
+            Ok(false) => failed += 1,
+            Err(e) => {
+                // Infra failure (sidecar down / DB error): stop the batch but keep
+                // progress. Remaining rows stay 'pending' and are retried on re-run.
+                eprintln!("analyze_pending: stopping early after infra error: {e}");
+                break;
+            }
         }
     }
 
@@ -72,8 +111,10 @@ pub async fn analyze_pending(state: State<'_, AppState>) -> Result<AnalyzeSummar
 }
 
 /// Analyze one photo and persist the outcome. Returns Ok(true) on a stored
-/// success, Ok(false) on a stored failure (bad file / decode error). Only a DB
-/// or join failure propagates as Err.
+/// success, Ok(false) on a stored per-file failure (bad file / decode error /
+/// malformed result). A transport/infra failure (sidecar down / timeout)
+/// propagates as Err WITHOUT persisting — the row stays 'pending' so a re-run
+/// retries it. A DB or join failure during persist also propagates as Err.
 ///
 /// D-conc replaceability: the whole "analyze one + persist" step lives here, so
 /// swapping the serial loop for a sidecar process pool later touches only the
@@ -84,11 +125,20 @@ async fn analyze_one(
     id: &str,
     path: &str,
 ) -> Result<bool, AppError> {
-    let call = sidecar.call("analyze", json!({ "path": path })).await;
-    let result: Result<AnalysisResult, String> = match call {
-        Ok(value) => serde_json::from_value(value).map_err(|e| e.to_string()),
-        Err(e) => Err(e.to_string()),
-    };
+    // C5 note: a slow op still head-of-line-blocks this single-threaded sidecar.
+    // The 30s CALL_TIMEOUT now surfaces as a transport Err here, which stops the
+    // batch cleanly (no false 'failed' cascade); the row stays 'pending'. A
+    // process-pool fix to remove HOL blocking is deferred to M1+.
+    let result: Result<AnalysisResult, String> =
+        match sidecar.call("analyze", json!({ "path": path })).await {
+            // op succeeded: a malformed result for a valid op is a real per-file
+            // problem, so a deserialize error is persisted as 'failed'.
+            Ok(Ok(value)) => serde_json::from_value(value).map_err(|e| e.to_string()),
+            // op ran but Python returned {error}: per-file decode error.
+            Ok(Err(op_err)) => Err(op_err),
+            // transport/infra failure: don't persist; let the caller stop the batch.
+            Err(transport_err) => return Err(AppError::Sidecar(transport_err.to_string())),
+        };
 
     let succeeded = result.is_ok();
     let db = state.db.clone();

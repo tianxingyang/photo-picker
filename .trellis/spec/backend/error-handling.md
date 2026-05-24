@@ -40,6 +40,72 @@ JSON-Lines response shape (from ARCHITECTURE.md §IPC):
 
 ---
 
+## Sidecar Call Contract & Analysis Failure Semantics
+
+> **Established 2026-05-24** (task `05-24-analysis-subsystem`). Refines "Python Sidecar Errors" above: the Rust side MUST tell a *per-file application error* apart from a *transport/infra failure* — they have **opposite** retry semantics, and conflating them marks every remaining photo permanently `failed` on a single sidecar crash.
+
+### Signature
+
+```rust
+// sidecar/mod.rs
+pub async fn call(&self, op: &str, payload: Value) -> Result<Result<Value, String>, SideErr>;
+```
+
+Two-level result — every caller MUST match all three arms:
+
+| Result | Meaning | Persist / retry |
+|--------|---------|-----------------|
+| `Ok(Ok(value))` | op ran, returned a result | persist columns + `analysis_state='done'` |
+| `Ok(Err(msg))` | op ran but Python returned `{id, error}` (bad/corrupt file) | persist `analysis_state='failed'` + `analysis_error=msg`; **NOT** retried |
+| `Err(e)` | transport/infra failure: serialize, write, reader dropped, **timeout** | do **NOT** persist; row stays `pending` and is retried on the next run |
+
+An `Ok(Ok(value))` whose shape fails `serde_json::from_value` is a per-file failure (persist `'failed'`), not a transport error.
+
+### Batch command (`analyze_pending`)
+
+- Selects only `analysis_state='pending'`; `'done'`/`'failed'` rows are skipped, so a re-run resumes pending work.
+- Per-file failure → count `failed`, continue. Infra failure (`Err`) → `eprintln!` + **`break`**, then return the **partial** `AnalyzeSummary { analyzed, failed }`. Never lose completed progress; remaining rows stay `pending` for retry.
+- **Single-flight**: guarded by an `AtomicBool` in `AppState` with an RAII reset on *every* exit path (`?`, `break`, return, panic). A concurrent second call returns an empty summary `{ analyzed: 0, failed: 0 }` rather than double-processing the same set.
+
+### IPC stream integrity (Python side)
+
+`main.py` MUST serialize responses with `allow_nan=False` plus a valid-JSON fallback (this runs *outside* `handle()`'s try/except, so it needs its own guard):
+
+```python
+try:
+    out = json.dumps(resp, allow_nan=False)
+except (ValueError, TypeError) as e:
+    out = json.dumps({"id": resp.get("id"), "error": f"unserializable result: {e}"})
+```
+
+**Why**: default `allow_nan=True` emits bare `NaN`/`Infinity` tokens — invalid JSON the Rust reader cannot parse, which leaves the pending call hanging the full `CALL_TIMEOUT`.
+
+### Wrong vs Correct
+
+```rust
+// WRONG — a dead/timed-out sidecar is recorded as a per-file failure, so
+// every remaining photo is marked 'failed' and never retried.
+let result = match sidecar.call("analyze", payload).await {
+    Ok(v) => serde_json::from_value(v).map_err(|e| e.to_string()),
+    Err(e) => Err(e.to_string()),
+};
+persist_analysis(&conn, id, result)?;
+
+// CORRECT — transport error leaves the row pending and stops the batch.
+match sidecar.call("analyze", payload).await {
+    Ok(Ok(v))      => /* deserialize → persist 'done' (or 'failed' on bad shape) */,
+    Ok(Err(op_err)) => /* persist 'failed' + analysis_error */,
+    Err(transport) => return Err(AppError::Sidecar(transport.to_string())), // no persist
+}
+```
+
+### Tests required (assertion points)
+- `persist_analysis` Ok → analysis columns set, `analysis_state='done'`, `analysis_error` cleared.
+- `persist_analysis` Err → `analysis_state='failed'` + `analysis_error` set, analysis columns untouched.
+- Pending query returns only `'pending'` rows (excludes `'done'`/`'failed'`).
+
+---
+
 ## Error Propagation Rules
 
 - `?` is the default. `match` an error only when the next step depends on the variant.

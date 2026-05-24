@@ -103,7 +103,16 @@ impl Sidecar {
         })
     }
 
-    pub async fn call(&self, op: &str, payload: Value) -> Result<Value, SideErr> {
+    /// Dispatch one op and await its response.
+    ///
+    /// The two-level result separates a transport/infra failure from a per-op
+    /// application error so the caller can react differently:
+    /// - `Ok(Ok(v))`  — the op succeeded with value `v`.
+    /// - `Ok(Err(e))` — the op RAN but Python returned `{id, error}` (a per-file
+    ///   application error, e.g. a corrupt image). The sidecar is still healthy.
+    /// - `Err(e)`     — transport/infra failure (serialize, write, reader dropped,
+    ///   timeout). The sidecar may be down; the request did not complete.
+    pub async fn call(&self, op: &str, payload: Value) -> Result<Result<Value, String>, SideErr> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let req = Request { id, op, payload };
         let line = serde_json::to_string(&req)?;
@@ -118,8 +127,11 @@ impl Sidecar {
         }
 
         match tokio::time::timeout(CALL_TIMEOUT, rx).await {
-            Ok(Ok(Ok(v))) => Ok(v),
-            Ok(Ok(Err(e))) => Err(e.into()),
+            // op ran and succeeded
+            Ok(Ok(Ok(v))) => Ok(Ok(v)),
+            // op ran but returned an application error — per-file, not transport
+            Ok(Ok(Err(e))) => Ok(Err(e)),
+            // oneshot sender dropped (reader loop exited) — transport failure
             Ok(Err(_)) => Err("sidecar reader dropped".into()),
             Err(_) => {
                 self.pending.lock().await.remove(&id);

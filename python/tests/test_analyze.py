@@ -67,6 +67,8 @@ def test_sharp_scores_higher_than_blurred(tmp_path):
 def test_blur_score_stable_across_resolution(tmp_path):
     # Same source image at two resolutions, BOTH above NORM_MAX_SIDE, so the
     # normalize-to-longest-side step brings them back to comparable scores.
+    # Note: sub-1024 images are intentionally not upscaled; this test only
+    # covers the >max_side normalization path.
     base = _checkerboard(size=2048, cell=64)
     native = _save(base, tmp_path / "native.png")
     downscaled = _save(
@@ -110,9 +112,16 @@ def test_mid_gray_is_normal(tmp_path):
 
 
 def test_exif_datetime_original_parsed(tmp_path):
+    """DateTimeOriginal (0x9003) must be read from the Exif sub-IFD (0x8769).
+
+    Writing it only into the sub-IFD is the path that real camera/phone JPEGs
+    follow and that the old IFD0-only getexif().get(0x9003) misses.
+    """
     img = _checkerboard()
     exif = img.getexif()
-    exif[0x9003] = "2026:05:24 10:30:00"  # DateTimeOriginal
+    # Write 0x9003 into the Exif sub-IFD (pointed to by tag 0x8769) — NOT IFD0.
+    sub_ifd = exif.get_ifd(0x8769)
+    sub_ifd[0x9003] = "2026:05:24 10:30:00"
     path = tmp_path / "with_exif.jpg"
     img.save(path, format="JPEG", exif=exif)
 
@@ -124,6 +133,58 @@ def test_no_exif_returns_null(tmp_path):
     path = _save(_checkerboard(), tmp_path / "no_exif.png")
     res = analyze.run({"path": path})
     assert res["shotAt"] is None
+
+
+def test_exif_all_zero_datetime_returns_null(tmp_path):
+    """An unset camera clock ("0000:00:00 00:00:00") must yield shotAt=None.
+
+    strptime rejects month=00, so the invalid date is filtered rather than
+    persisted as "0000-00-00T00:00:00".
+    """
+    img = _checkerboard()
+    exif = img.getexif()
+    sub_ifd = exif.get_ifd(0x8769)
+    sub_ifd[0x9003] = "0000:00:00 00:00:00"
+    path = tmp_path / "zero_exif.jpg"
+    img.save(path, format="JPEG", exif=exif)
+
+    res = analyze.run({"path": str(path)})
+    assert res["shotAt"] is None
+
+
+def test_palette_image_gives_finite_blur_score(tmp_path):
+    """A palette ('P') image larger than NORM_MAX_SIDE must yield a sane blurScore.
+
+    The old code resized in palette-index space before converting to 'L', which
+    produced garbage pixel values. Converting to 'L' first (F3 fix) makes the
+    score comparable to processing the same image as 'L' directly.
+    """
+    from analyzers import constants
+
+    # Build an image bigger than NORM_MAX_SIDE so the resize path is exercised.
+    size = constants.NORM_MAX_SIDE + 128
+    rgb_img = _checkerboard(size=size, cell=16)
+    palette_img = rgb_img.convert("P")
+
+    p_path = tmp_path / "palette.png"
+    l_path = tmp_path / "luminance.png"
+    palette_img.save(p_path, format="PNG")
+    rgb_img.convert("L").save(l_path, format="PNG")
+
+    res_p = analyze.run({"path": str(p_path)})
+    res_l = analyze.run({"path": str(l_path)})
+
+    # Both must produce a finite, positive blurScore.
+    assert isinstance(res_p["blurScore"], float)
+    assert res_p["blurScore"] > 0
+    # The palette-mode result should be within a reasonable factor of the
+    # direct-grayscale result (not orders of magnitude off).
+    ratio = max(res_p["blurScore"], res_l["blurScore"]) / max(
+        1e-9, min(res_p["blurScore"], res_l["blurScore"])
+    )
+    assert ratio < 4.0, (
+        f"palette blurScore diverged from L-mode: {res_p['blurScore']} vs {res_l['blurScore']}"
+    )
 
 
 # --- phash --------------------------------------------------------------
