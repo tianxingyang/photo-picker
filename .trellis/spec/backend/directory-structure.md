@@ -33,8 +33,9 @@ photo-picker/
 - `commands/` is the **only** layer Tauri talks to. Commands MUST NOT contain analysis logic — they delegate to `scanner/`, `db/`, or `sidecar/`.
 - `db/` is the **only** owner of the rusqlite `Connection`. Other modules receive `&Connection` or a typed accessor.
 - `sidecar/` is the **only** owner of the Python child process and the JSON-Lines stream. No other module spawns or reads from it.
-- `python/analyzers/<op>.py` MUST export a callable `def run(payload: dict) -> dict`. `main.py` dispatches by op name.
-- A new analysis op = new file in `python/analyzers/` + new arm in `main.py` + new `op` value documented in ARCHITECTURE.md §IPC.
+- An op handler module under `python/analyzers/` MUST export a callable `def run(payload: dict) -> dict`. `main.py` dispatches by op name.
+- M1 ships a single `analyze` op (`analyzers/analyze.py`) that decodes each image once and **composes four algorithm modules** — `exif.py` / `blur.py` / `exposure.py` / `phash.py`, each a pure function (`extract_shot_at` / `score` / `score` / `compute`), not its own `run`. This keeps decode-once efficiency while preserving one-algorithm-per-module testability.
+- A new op handler = new file exporting `run` + new arm in `main.py` + new `op` value documented in ARCHITECTURE.md §IPC. A new algorithm inside `analyze` = new pure-function module called from `analyze.py`.
 
 ---
 
@@ -50,5 +51,5 @@ photo-picker/
 
 Architectural intent in ARCHITECTURE.md §进程拓扑. As real modules land, link the canonical ones here:
 
-- `src-tauri/src/commands/photos.rs` — first command module template (TBD).
-- `python/analyzers/blur.py` — first analyzer template (TBD).
+- `src-tauri/src/commands/photos.rs` (`scan_folder`) / `commands/analysis.rs` (`analyze_pending`) — command module templates: clone the sidecar `Arc` under a brief lock, do DB work inside `spawn_blocking`.
+- `python/analyzers/analyze.py` — op-handler template (decode once, compose `blur.py` / `exposure.py` / `phash.py` / `exif.py`).

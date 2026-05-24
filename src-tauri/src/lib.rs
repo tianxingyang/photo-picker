@@ -52,7 +52,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::echo_via_sidecar,
-            commands::photos::scan_folder
+            commands::photos::scan_folder,
+            commands::analysis::analyze_pending
         ])
         // why: tauri::Builder::run is the boot path; failure here is unrecoverable
         .run(tauri::generate_context!())

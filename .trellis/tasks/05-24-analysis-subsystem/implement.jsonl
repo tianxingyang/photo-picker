@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "ARCHITECTURE.md", "reason": "IPC JSON-Lines 协议与 op 枚举的事实源；本任务新增 analyze op 并据此改文档"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "模块边界：commands 不含算法、sidecar 唯一持有子进程、一算法一 module"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "migration forward-only/user_version、prepare_cached、不跨 await 持 Connection、命名约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "三层错误边界、sidecar error 处理；本任务要修正其中 status=analysis_failed 旧写法"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "禁项(unwrap/println/print/锁跨 await)、新 op 与 migration 必做项、测试要求"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Python 日志必须走 stderr，stdout 仅留 IPC"}

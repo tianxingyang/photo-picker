@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod photos;
 
 use serde_json::json;

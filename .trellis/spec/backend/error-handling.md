@@ -36,7 +36,7 @@ JSON-Lines response shape (from ARCHITECTURE.md §IPC):
 ```
 
 - Python wraps every analyzer in `try/except Exception as e: return {"id": req_id, "error": f"{type(e).__name__}: {e}"}`. An exception MUST NOT kill the dispatch loop.
-- Rust treats `error` as opaque text and maps it to `AppError::Sidecar(String)` (or hybrid equivalent). Failed analysis sets `photos.status = analysis_failed`; the dispatch loop keeps running.
+- Rust treats `error` as opaque text and maps it to `AppError::Sidecar(String)` (or hybrid equivalent). Failed analysis sets `photos.analysis_state = 'failed'` and records the raw text in `photos.analysis_error` (decoupled from the user-facing `status` enum); the dispatch loop keeps running.
 
 ---
 

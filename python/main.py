@@ -11,10 +11,11 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from analyzers import echo
+from analyzers import analyze, echo
 
 OPS: dict[str, Callable[[dict], dict]] = {
     "echo": echo.run,
+    "analyze": analyze.run,
 }
 
 

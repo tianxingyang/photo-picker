@@ -67,11 +67,12 @@
 
 ```
 扫描完成 / 用户手动触发
-  └─> Rust: 取出待分析的 photo_ids，按 batch 派发
-       └─> 对每张：调用 sidecar.call("blur", {path}) / "exposure" / "phash" / "exif"
-            └─> sidecar 返回 JSON 结果
-                 └─> Rust 写入 DB
-                      └─> emit 事件给前端更新 UI
+  └─> Frontend: invoke('analyze_pending')
+       └─> Rust: 取出 analysis_state='pending' 的行，单 sidecar 串行逐张派发
+            └─> 对每张：调用 sidecar.call("analyze", {path})
+                 └─> sidecar 一次解码 → 内部跑 blur/exposure/phash/exif → 返回合并 JSON
+                      └─> Rust 增量写入 DB（成功 analysis_state='done'；失败='failed'+analysis_error）
+                           └─> 全部跑完返回 {analyzed, failed}（进度事件留待 M2）
 ```
 
 ## 数据流：相似分组
@@ -93,13 +94,20 @@ JSON-Lines over stdio，每行一个 JSON 对象。
 请求（Rust → Python）：
 
 ```json
-{ "id": 42, "op": "blur", "payload": { "path": "C:/photos/IMG_001.jpg" } }
+{ "id": 42, "op": "analyze", "payload": { "path": "C:/photos/IMG_001.jpg" } }
 ```
 
-响应（Python → Rust）：
+响应（Python → Rust）。`analyze` 一次解码产出全部分析字段（camelCase）：
 
 ```json
-{ "id": 42, "result": { "score": 124.7, "isBlurry": false } }
+{ "id": 42, "result": {
+  "shotAt": "2026-05-24T10:30:00",   // 无 EXIF → null
+  "blurScore": 124.7,
+  "isBlurry": false,
+  "exposureScore": 0.42,              // 归一灰度均值 [0,1]
+  "exposureFlag": "normal",           // normal | over | under
+  "phash": "ffc3a18000000000"         // 64-bit pHash → 16 hex
+} }
 ```
 
 错误：
@@ -108,7 +116,8 @@ JSON-Lines over stdio，每行一个 JSON 对象。
 { "id": 42, "error": "FileNotFoundError: ..." }
 ```
 
-`id` 由 Rust 单调递增，用于多路复用。`op` 当前枚举：`blur` / `exposure` / `phash` / `exif`，后续可扩展 `embed` / `face`。
+`id` 由 Rust 单调递增，用于多路复用。`op` 当前枚举：`analyze`（Python 端解码一次，依次调
+`blur` / `exposure` / `phash` / `exif` 四个内部 module 合并结果），后续可扩展 `embed` / `face`。
 
 ## 存储位置
 

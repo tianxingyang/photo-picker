@@ -3,7 +3,14 @@ name = "photo-picker-sidecar"
 version = "0.0.0"
 description = "Photo Picker analysis sidecar"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "pillow",
+    "pillow-heif",
+    "numpy",
+    "imagehash",
+]
 
 [dependency-groups]
-dev = []
+dev = [
+    "pytest",
+]
