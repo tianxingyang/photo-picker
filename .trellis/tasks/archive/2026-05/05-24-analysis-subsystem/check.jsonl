@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Code Review Checklist + 禁项/必做项，逐条核对"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "migration forward-only、新旧库各跑一次、不跨 await 持 Connection"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "命令返回 AppError、sidecar error 不杀循环、坏文件落 failed"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "新增 IPC op / DB 列 / 命令跨 Rust↔Python↔DB 三层，核对数据流一致"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 echo_via_sidecar 取 Arc 模式、scanner 的 tx/prepare_cached 模式，避免重复造轮"}

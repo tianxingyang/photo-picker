@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod photos;
 
 use serde_json::json;
@@ -20,10 +21,13 @@ pub async fn echo_via_sidecar(
         })?
     };
 
-    let result = sidecar
-        .call("echo", json!({ "text": text }))
-        .await
-        .map_err(|e| AppError::Sidecar(e.to_string()))?;
+    // echo has no per-file semantics, so flatten the two-level result: both an
+    // op error and a transport error become the command's error.
+    let result = match sidecar.call("echo", json!({ "text": text })).await {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return Err(AppError::Sidecar(e)),
+        Err(e) => return Err(AppError::Sidecar(e.to_string())),
+    };
 
     result
         .get("text")

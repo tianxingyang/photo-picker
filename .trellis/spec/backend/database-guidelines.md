@@ -39,9 +39,11 @@ SQLite via `rusqlite` (bundled). WAL mode. File location: `<app_data_dir>/photo-
 
 ---
 
-## Schema Shape — OPEN
+## Schema Shape — RESOLVED (M1: wide table)
 
-> **DECISION pending** (mirrors ROADMAP.md decision pool):
+> **DECIDED 2026-05-24** (task `05-24-analysis-subsystem`, D1): **Candidate A — wide table**. Analysis columns live directly on `photos` (`shot_at / blur_score / is_blurry / exposure_score / exposure_flag / phash`), plus an independent `analysis_state` (`pending|done|failed`) + `analysis_error` to track the analysis lifecycle without overloading `status`. Future heavy/sparse ops (M3 CLIP embedding, faces) go to their own tables, not the wide row. Migration `0002_analysis.sql`.
+>
+> Original options (kept for context):
 > - **Candidate A — wide table**: one row per photo, analysis columns added per op. Pros: joinless reads. Cons: `ALTER TABLE` on every new op; null sparsity.
 > - **Candidate B — tall table**: `photos` + `photo_analyses(photo_id, op, result_json)`. Pros: ops extend without schema change. Cons: every read joins.
 > - **Candidate C — hybrid**: hot columns (`status`, `shot_at`, `blur_score`, `exposure_score`, `phash`) wide on `photos`; future ops tall on `photo_analyses`. Pros: hot path fast, future extensible. Cons: two patterns coexist.

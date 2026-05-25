@@ -1,3 +1,3 @@
-from . import echo
+from . import analyze, echo
 
-__all__ = ["echo"]
+__all__ = ["analyze", "echo"]

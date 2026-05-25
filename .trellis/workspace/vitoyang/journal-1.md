@@ -38,3 +38,36 @@ Ran max-effort code review on M0 scaffold (a35d8a3) and surfaced 8 findings; use
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: M1 分析子系统 code-review 修复
+
+**Date**: 2026-05-25
+**Task**: M1 分析子系统 code-review 修复
+**Branch**: `feat/m1-analysis-subsystem`
+
+### Summary
+
+对 M1 分析子系统做 max 强度 code-review,定位 13 项发现并用 agent team(Python/Rust 并行)逐项修复:EXIF 子 IFD 读取、日期校验、先转灰再缩、曝光边界/护栏、main.py 安全序列化;sidecar::call 双层 Result 区分传输/单文件错误、analyze_one 传输错误保留 pending 可重试、analyze_pending 部分汇总不丢进度、AtomicBool 单飞护栏。trellis-check 全 PASS(pytest 14 / cargo test 11 / clippy/fmt/ruff 干净)。契约沉淀进 error-handling.md 与新建 analyzer-guidelines.md。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `94d7b7d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -11,10 +11,11 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from analyzers import echo
+from analyzers import analyze, echo
 
 OPS: dict[str, Callable[[dict], dict]] = {
     "echo": echo.run,
+    "analyze": analyze.run,
 }
 
 
@@ -42,7 +43,13 @@ def main() -> None:
         if not line:
             continue
         resp = handle(line)
-        sys.stdout.write(json.dumps(resp) + "\n")
+        # Serialize defensively: a non-finite float (NaN/Infinity) would produce
+        # a bare token that the Rust JSON reader can't parse, causing a 30s hang.
+        try:
+            out = json.dumps(resp, allow_nan=False)
+        except (ValueError, TypeError) as e:
+            out = json.dumps({"id": resp.get("id"), "error": f"unserializable result: {e}"})
+        sys.stdout.write(out + "\n")
         sys.stdout.flush()
 
 

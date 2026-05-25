@@ -4,6 +4,7 @@ mod error;
 mod scanner;
 mod sidecar;
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use rusqlite::Connection;
@@ -20,6 +21,9 @@ pub struct AppState {
     // ref, then `blocking_lock()` the Connection inside spawn_blocking — keeping
     // rusqlite's blocking work off the tokio worker without holding it across .await.
     pub db: Arc<Mutex<Connection>>,
+    // why: single-flight guard so two concurrent analyze_pending invocations
+    // don't both pick up the same pending rows and double-process them.
+    pub analysis_running: AtomicBool,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,6 +37,7 @@ pub fn run() {
             app.manage(AppState {
                 sidecar: Mutex::new(None),
                 db: Arc::new(Mutex::new(conn)),
+                analysis_running: AtomicBool::new(false),
             });
 
             let handle = app.handle().clone();
@@ -52,7 +57,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::echo_via_sidecar,
-            commands::photos::scan_folder
+            commands::photos::scan_folder,
+            commands::analysis::analyze_pending
         ])
         // why: tauri::Builder::run is the boot path; failure here is unrecoverable
         .run(tauri::generate_context!())

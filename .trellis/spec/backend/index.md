@@ -16,7 +16,8 @@ This directory contains guidelines for backend development. Fill in each file wi
 |-------|-------------|--------|
 | [Directory Structure](./directory-structure.md) | `src-tauri/` + `python/` layout, module boundaries | Filled |
 | [Database Guidelines](./database-guidelines.md) | rusqlite + WAL, migrations, schema-shape OPEN | Filled (1 OPEN) |
-| [Error Handling](./error-handling.md) | Three error boundaries; Rust error-lib OPEN | Filled (1 OPEN) |
+| [Error Handling](./error-handling.md) | Three error boundaries; sidecar call contract + analysis failure/retry semantics; Rust error-lib OPEN | Filled (1 OPEN) |
+| [Analyzer Guidelines](./analyzer-guidelines.md) | Python `analyzers/*` conventions: EXIF sub-IFD gotcha, grayscale-before-resize, edge cases | Filled |
 | [Quality Guidelines](./quality-guidelines.md) | rustfmt + clippy + ruff; forbidden / required | Filled |
 | [Logging Guidelines](./logging-guidelines.md) | stderr for Python, structured fields; library OPEN | Filled (1 OPEN) |
 
