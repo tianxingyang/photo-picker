@@ -71,3 +71,36 @@ Ran max-effort code review on M0 scaffold (a35d8a3) and surfaced 8 findings; use
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: M1 近重复分组 (pHash 连通分量)
+
+**Date**: 2026-05-26
+**Task**: M1 近重复分组 (pHash 连通分量)
+**Branch**: `main`
+
+### Summary
+
+规划并实现 similar-grouping 子任务：数据模型从一照一组改为多方法多对多落库 (similar_groups + group_members)，照片可跨方法属多组，M3 零迁移复用。算法定为纯 pHash + 连通分量/单链 (弃用时间窗)，阈值 8 存 params 可调，孤立不分组，组 id 由 blake3(method+排序成员) 派生保证重跑幂等。新增 migration 0003、grouping/mod.rs 纯逻辑、commands/grouping.rs::group_photos (single-flight, spawn_blocking)。26 测试绿，PR #3 squash 合并 main 后归档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4bf7bcc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
