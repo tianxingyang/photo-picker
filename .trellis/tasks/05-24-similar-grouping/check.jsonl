@@ -1,1 +1,2 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "校验 0003 migration 形状、FK/CASCADE/索引、查询模式与 spawn_blocking 不跨 await 持锁约束是否满足"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "校验三层 formatter（rustfmt/clippy）与禁用模式"}

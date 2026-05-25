@@ -50,6 +50,15 @@ SQLite via `rusqlite` (bundled). WAL mode. File location: `<app_data_dir>/photo-
 >
 > Sub-agents MUST NOT pick on their own. Surface the choice in a task PRD/design before implementing schema.
 
+### Grouping model — RESOLVED (M1: multi-method many-to-many)
+
+> **DECIDED 2026-05-25** (task `05-24-similar-grouping`). Near-duplicate / future semantic grouping is **derived data** stored in two tables (migration `0003_grouping.sql`, `user_version` → 3):
+>
+> - `similar_groups(id TEXT PK, method TEXT, params TEXT, created_at TEXT)` — group entity. `method` tags the algorithm (M1 writes `'phash_burst'`); `params` is the algorithm-parameter JSON (e.g. `{"threshold":8,"version":1}`).
+> - `group_members(group_id, photo_id, PRIMARY KEY(group_id, photo_id))` — many-to-many junction, both FKs `ON DELETE CASCADE`. A photo may belong to multiple groups across methods. Indexes `idx_group_members_photo`, `idx_similar_groups_method`.
+>
+> Rationale: per the wide-table rule this "heavy/sparse" derived data lives in its own tables, NOT on the `photos` wide row. Group `id` is content-derived (`blake3(method + "\n" + sorted_member_ids)`), so re-running the grouping command is byte-idempotent (delete-then-reinsert per method). M3 (CLIP / faces) reuses these two tables with new `method` values + per-method commands — **zero schema migration**.
+
 Related OPEN items (deferred to feature tasks): status column encoding (TEXT vs INT), thumbnail resolution tiers.
 
 ---

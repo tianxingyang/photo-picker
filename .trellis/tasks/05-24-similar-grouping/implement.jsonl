@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "migration 追加规则与 user_version 驱动、prepared statement/事务、spawn_blocking 不跨 await 持锁、表/列/索引命名约定 —— 0003 迁移与 group_photos 命令直接依据"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "src-tauri 模块边界：纯逻辑 grouping/mod.rs vs 命令 commands/grouping.rs 的放置约定"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "rustfmt + clippy 必过项与禁用模式，实现需满足"}

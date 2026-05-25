@@ -38,7 +38,8 @@ parent 持有、需在对应子任务 **planning 阶段** 敲定（拆分阶段�
 
 - **D1 数据模型形状 — 已锁定：宽表** ✅（用户 2026-05-24 决定）。给 `photos` 加 `shot_at / blur_score / is_blurry / exposure_score / exposure_flag / phash` 列（最终列名以 analysis-subsystem design 为准）；M3 的 CLIP embedding / 人脸走独立表，不绑死宽表。
 - **D2 模糊/曝光阈值策略**（硬编码 / 用户可调 / 组内归一）— analysis-subsystem 决定；建议 M1 先硬编码 + 留参数位。
-- **D3 相似分组时间窗口宽度 + 汉明距离阈值** — similar-grouping 决定。
+- **D3 相似分组策略 — 已锁定：纯 pHash + 连通分量** ✅（用户 2026-05-25 决定）。**不用时间窗口**；按 64-bit pHash 汉明距离做单链/连通分量聚类，阈值默认 8（存 `params` 可调）。孤立照片不分组。
+- **D6 分组数据模型 — 已锁定：多方法多对多 + 落库** ✅（用户 2026-05-25 决定）。新增 `similar_groups(id, method, params, created_at)` + `group_members(group_id, photo_id)` junction；一张照片可属多组（跨方法），M1 只写 `method='phash_burst'`，M3 语义/人脸分组复用同两表、零迁移。组 id 由 `blake3(method + sorted member ids)` 派生以保证重跑幂等。
 - **D4 组内联动 — 已锁定：不联动** ✅（用户 2026-05-24 决定）。设 `keep` 只改当前张，同组其余保持原状态（默认 `pending`），由用户手动逐张淘汰；不做自动 reject。
 - **D5 HEIC 在 webview 的解码/显示路径** — ab-compare 决定（分析侧读取走 pillow-heif 已定）。
 

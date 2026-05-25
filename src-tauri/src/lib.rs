@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod error;
+mod grouping;
 mod scanner;
 mod sidecar;
 
@@ -24,6 +25,9 @@ pub struct AppState {
     // why: single-flight guard so two concurrent analyze_pending invocations
     // don't both pick up the same pending rows and double-process them.
     pub analysis_running: AtomicBool,
+    // why: single-flight guard so two concurrent group_photos invocations
+    // don't both re-cluster and race the delete-then-reinsert transaction.
+    pub grouping_running: AtomicBool,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -38,6 +42,7 @@ pub fn run() {
                 sidecar: Mutex::new(None),
                 db: Arc::new(Mutex::new(conn)),
                 analysis_running: AtomicBool::new(false),
+                grouping_running: AtomicBool::new(false),
             });
 
             let handle = app.handle().clone();
@@ -58,7 +63,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::echo_via_sidecar,
             commands::photos::scan_folder,
-            commands::analysis::analyze_pending
+            commands::analysis::analyze_pending,
+            commands::grouping::group_photos
         ])
         // why: tauri::Builder::run is the boot path; failure here is unrecoverable
         .run(tauri::generate_context!())

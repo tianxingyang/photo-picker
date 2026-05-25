@@ -9,6 +9,7 @@ type DbErr = Box<dyn Error + Send + Sync>;
 const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0001_initial.sql"),
     include_str!("../../migrations/0002_analysis.sql"),
+    include_str!("../../migrations/0003_grouping.sql"),
 ];
 
 pub fn open(app_handle: &AppHandle) -> Result<Connection, DbErr> {
@@ -130,6 +131,55 @@ mod tests {
             })
             .unwrap();
         assert_eq!(status, "keep");
+    }
+
+    #[test]
+    fn grouping_tables_build_at_version_3() {
+        let conn = Connection::open_in_memory().unwrap();
+        // why: CASCADE only fires with foreign_keys ON (prod sets it in db::open).
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        run_migrations(&conn).unwrap();
+
+        assert_eq!(
+            user_version(&conn),
+            3,
+            "0003_grouping bumps user_version to 3"
+        );
+
+        // Both grouping tables must be queryable (would error if not created).
+        let groups: i64 = conn
+            .query_row("SELECT count(*) FROM similar_groups", [], |r| r.get(0))
+            .unwrap();
+        let members: i64 = conn
+            .query_row("SELECT count(*) FROM group_members", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(groups, 0);
+        assert_eq!(members, 0);
+
+        // ON DELETE CASCADE: deleting a group must remove its member rows.
+        conn.execute(
+            "INSERT INTO photos (id, path, status, created_at) \
+             VALUES ('p', '/p.jpg', 'pending', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO similar_groups (id, method, params, created_at) \
+             VALUES ('g', 'phash_burst', '{}', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO group_members (group_id, photo_id) VALUES ('g', 'p')",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM similar_groups WHERE id = 'g'", [])
+            .unwrap();
+        let members: i64 = conn
+            .query_row("SELECT count(*) FROM group_members", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(members, 0, "ON DELETE CASCADE clears member rows");
     }
 
     #[test]
