@@ -1,8 +1,7 @@
 CREATE TABLE IF NOT EXISTS similar_groups (
   id         TEXT PRIMARY KEY,
   method     TEXT NOT NULL,            -- M1 fixed 'phash_burst'
-  params     TEXT NOT NULL,            -- JSON, e.g. {"threshold":8,"version":1}
-  created_at TEXT NOT NULL             -- ISO-8601 (Rfc3339)
+  params     TEXT NOT NULL             -- JSON, e.g. {"threshold":8,"version":1}
 );
 
 CREATE TABLE IF NOT EXISTS group_members (

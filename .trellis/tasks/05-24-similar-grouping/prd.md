@@ -10,7 +10,7 @@
 
 M1 锁定「**多方法多对多 + 落库**」分组模型（用户决定）：
 
-- `similar_groups(id, method, params, created_at)`：组实体。`method` 标识分组方法，M1 写 `'phash_burst'`；`params` 存算法参数（阈值、版本）的 JSON。
+- `similar_groups(id, method, params)`：组实体。`method` 标识分组方法，M1 写 `'phash_burst'`；`params` 存算法参数（阈值、版本）的 JSON。不存 `created_at`：组是无状态全量重建的派生缓存、id 由内容派生，per-run 时间戳无正当消费者，故 M1 不设（将来 group-browse-ui 真需要时再带明确语义补列）。
 - `group_members(group_id, photo_id)`：成员 junction，**多对多**。一张照片可属多个组（跨方法）；M3 语义 / 人脸分组复用同两表、零迁移接入。
 - `phash_burst` 方法内一张照片属至多一组；跨方法可属多组（如 M3 一张含两人照片可同进两个人脸组）。
 

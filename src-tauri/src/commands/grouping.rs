@@ -4,8 +4,6 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::json;
 use tauri::State;
-use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
 
 use crate::error::AppError;
 use crate::grouping::{cluster, parse_phash};
@@ -102,9 +100,6 @@ fn regroup(conn: &Connection) -> rusqlite::Result<GroupSummary> {
         .collect();
 
     let comps = cluster(&items, PHASH_THRESHOLD);
-    let now = OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     let params_json = json!({ "threshold": PHASH_THRESHOLD, "version": 1 }).to_string();
 
     let tx = conn.unchecked_transaction()?;
@@ -116,8 +111,7 @@ fn regroup(conn: &Connection) -> rusqlite::Result<GroupSummary> {
         )?;
 
         let mut insert_group = tx.prepare_cached(
-            "INSERT INTO similar_groups (id, method, params, created_at) \
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO similar_groups (id, method, params) VALUES (?1, ?2, ?3)",
         )?;
         let mut insert_member =
             tx.prepare_cached("INSERT INTO group_members (group_id, photo_id) VALUES (?1, ?2)")?;
@@ -125,7 +119,7 @@ fn regroup(conn: &Connection) -> rusqlite::Result<GroupSummary> {
         let mut grouped_photos = 0u32;
         for comp in &comps {
             let gid = derive_id(METHOD, comp);
-            insert_group.execute(params![gid, METHOD, params_json, now])?;
+            insert_group.execute(params![gid, METHOD, params_json])?;
             for photo_id in comp {
                 insert_member.execute(params![gid, photo_id])?;
                 grouped_photos += 1;

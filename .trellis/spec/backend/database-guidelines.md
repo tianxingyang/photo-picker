@@ -54,10 +54,10 @@ SQLite via `rusqlite` (bundled). WAL mode. File location: `<app_data_dir>/photo-
 
 > **DECIDED 2026-05-25** (task `05-24-similar-grouping`). Near-duplicate / future semantic grouping is **derived data** stored in two tables (migration `0003_grouping.sql`, `user_version` → 3):
 >
-> - `similar_groups(id TEXT PK, method TEXT, params TEXT, created_at TEXT)` — group entity. `method` tags the algorithm (M1 writes `'phash_burst'`); `params` is the algorithm-parameter JSON (e.g. `{"threshold":8,"version":1}`).
+> - `similar_groups(id TEXT PK, method TEXT, params TEXT)` — group entity. `method` tags the algorithm (M1 writes `'phash_burst'`); `params` is the algorithm-parameter JSON (e.g. `{"threshold":8,"version":1}`). **No `created_at`**: a per-run timestamp on a stateless, fully-rebuilt, content-id'd cache has no consumer and would be denormalized (same value on every row of a run); it also breaks byte-idempotency. Add a time field with deliberate semantics only when a consumer needs it.
 > - `group_members(group_id, photo_id, PRIMARY KEY(group_id, photo_id))` — many-to-many junction, both FKs `ON DELETE CASCADE`. A photo may belong to multiple groups across methods. Indexes `idx_group_members_photo`, `idx_similar_groups_method`.
 >
-> Rationale: per the wide-table rule this "heavy/sparse" derived data lives in its own tables, NOT on the `photos` wide row. Group `id` is content-derived (`blake3(method + "\n" + sorted_member_ids)`), so re-running the grouping command is byte-idempotent (delete-then-reinsert per method). M3 (CLIP / faces) reuses these two tables with new `method` values + per-method commands — **zero schema migration**.
+> Rationale: per the wide-table rule this "heavy/sparse" derived data lives in its own tables, NOT on the `photos` wide row. Group `id` is content-derived (`blake3(method + "\n" + sorted_member_ids)`) and the row carries no timestamp, so each `(id, method, params)` row is a pure function of its membership — re-running the grouping command is byte-idempotent (delete-then-reinsert per method). M3 (CLIP / faces) reuses these two tables with new `method` values + per-method commands — **zero schema migration**.
 
 Related OPEN items (deferred to feature tasks): status column encoding (TEXT vs INT), thumbnail resolution tiers.
 

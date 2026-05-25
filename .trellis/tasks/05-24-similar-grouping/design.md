@@ -15,8 +15,7 @@ migration `src-tauri/migrations/0003_grouping.sql`（`user_version` → 3）：
 CREATE TABLE IF NOT EXISTS similar_groups (
   id         TEXT PRIMARY KEY,
   method     TEXT NOT NULL,            -- M1 固定 'phash_burst'
-  params     TEXT NOT NULL,            -- JSON, e.g. {"threshold":8,"version":1}
-  created_at TEXT NOT NULL             -- ISO-8601 (Rfc3339)
+  params     TEXT NOT NULL             -- JSON, e.g. {"threshold":8,"version":1}
 );
 
 CREATE TABLE IF NOT EXISTS group_members (
@@ -67,7 +66,7 @@ group_photos()  [#[tauri::command] async]
          DELETE FROM similar_groups WHERE method = 'phash_burst'   -- CASCADE 清成员
          for comp in comps:
            let gid = derive_id("phash_burst", &comp)
-           INSERT similar_groups(gid, 'phash_burst', params_json, now)
+           INSERT similar_groups(gid, 'phash_burst', params_json)
            INSERT group_members(gid, photo_id)  -- 逐成员
        tx.commit()
      }
@@ -75,7 +74,6 @@ group_photos()  [#[tauri::command] async]
 ```
 
 - `const PHASH_THRESHOLD: u32 = 8;`，写入 `params` JSON（`{"threshold":8,"version":1}`）。
-- `now = OffsetDateTime::now_utc().format(&Rfc3339)`（复用 scanner 的 `time` crate 用法）。
 - **不持锁跨 await**：DB 工作全在 `spawn_blocking` 内 `blocking_lock`（backend spec 硬约束，仿 photos/analysis）。
 - 触发：前端在 `analyze_pending` 完成后调用，或用户手动「重新分组」。与分析解耦——便于独立测试与重跑幂等。
 

@@ -164,8 +164,8 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO similar_groups (id, method, params, created_at) \
-             VALUES ('g', 'phash_burst', '{}', '2026-01-01T00:00:00Z')",
+            "INSERT INTO similar_groups (id, method, params) \
+             VALUES ('g', 'phash_burst', '{}')",
             [],
         )
         .unwrap();
