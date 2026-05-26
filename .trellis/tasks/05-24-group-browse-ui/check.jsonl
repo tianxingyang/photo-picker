@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Prettier+ESLint forbidden/required patterns — the prettier gate and forbidden-pattern review for new tsx/ts."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "rustfmt + clippy -D warnings gate for the new list_groups command."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "A11y baseline (keyboard-reachable, color-not-only, alt), perf (virtualize >100, memo discipline), photo-URL rule — verify against acceptance criteria."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify optimistic setStatus + per-id selectors + no whole-store reads in list items."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify the read query follows rusqlite conventions and never holds the lock across await."}

@@ -13,3 +13,21 @@ export type Photo = {
   status: PhotoStatus;
   src: PhotoSrc;
 };
+
+export type ExposureFlag = "normal" | "over" | "under";
+export type AnalysisState = "pending" | "done" | "failed";
+
+// Photo enriched with analysis fields for the group-browse view. Mirrors the
+// Rust `BrowsePhoto` DTO (commands/grouping.rs); validated/derived in api/.
+export type BrowsePhoto = {
+  id: PhotoId;
+  name: string;
+  src: PhotoSrc;
+  isHeic: boolean; // browsers can't decode HEIC -> show a placeholder tile
+  status: PhotoStatus;
+  shotAt: string | null;
+  blurScore: number | null;
+  isBlurry: boolean | null;
+  exposureFlag: ExposureFlag | null;
+  analysisState: AnalysisState;
+};

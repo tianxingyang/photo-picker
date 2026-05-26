@@ -1,52 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Semantic design tokens — neutral dark canvas so photo colour reads true.
+   Source: design.md §5 (ui-ux-pro-max photo-culling palette). */
 :root {
+  --background: #0f172a;
+  --surface: #192134;
+  --foreground: #ffffff;
+  --muted-foreground: #94a3b8;
+  --border: rgba(255, 255, 255, 0.08);
+  --primary: #7c3aed;
+  --keep: #10b981;
+  --reject: #dc2626;
+  --pending: #f59e0b;
+  --warn: #f59e0b;
+  --info: #60a5fa;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
   font-family:
     system-ui,
     -apple-system,
     "Segoe UI",
     Roboto,
     sans-serif;
-  color-scheme: light dark;
-}
-
-body {
-  margin: 0;
-  padding: 24px;
-}
-
-main {
-  max-width: 640px;
-}
-
-.row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.photo-list {
-  margin-top: 16px;
-  padding-left: 20px;
-  max-height: 60vh;
-  overflow-y: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-}
-
-input {
-  flex: 1;
-  padding: 6px 10px;
-  font: inherit;
-}
-
-button {
-  padding: 6px 16px;
-  font: inherit;
-  cursor: pointer;
-}
-
-.reply {
-  margin-top: 16px;
-  padding: 8px 12px;
-  border-left: 3px solid currentColor;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--background);
+  color: var(--foreground);
 }

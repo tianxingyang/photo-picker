@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Function-component structure, named exports, photo-URL (PhotoSrc) rule, styling decision, TanStack Virtual perf rule — all directly governs PhotoCard/GroupBrowseView."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand per-domain pattern, optimistic status updates, per-id selectors — governs groupsStore design."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TS strict + branded types + Rust↔TS boundary validation pattern for the new BrowsePhoto types and groupsApi narrowing."}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "api/ isolation rule — convertFileSrc path→src conversion must live in api layer, not components."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "rusqlite + WAL + prepare_cached conventions for the list_groups read query."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError boundaries + spawn_blocking/blocking_lock concurrency rule the list_groups command must follow."}
+{"file": "ARCHITECTURE.md", "reason": "IPC camelCase contract + process topology that the new command DTO and frontend invoke must match."}

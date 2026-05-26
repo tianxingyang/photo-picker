@@ -64,7 +64,8 @@ pub fn run() {
             commands::echo_via_sidecar,
             commands::photos::scan_folder,
             commands::analysis::analyze_pending,
-            commands::grouping::group_photos
+            commands::grouping::group_photos,
+            commands::grouping::list_groups
         ])
         // why: tauri::Builder::run is the boot path; failure here is unrecoverable
         .run(tauri::generate_context!())
