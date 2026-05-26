@@ -38,6 +38,11 @@ def handle(line: str) -> dict[str, Any]:
 
 
 def main() -> None:
+    # why: Windows defaults stdin/stdout to the locale codepage (e.g. cp936 on
+    # a zh-CN system), which mis-decodes the UTF-8 JSON from Rust — non-ASCII
+    # paths (CJK folder names) then fail to open. Force UTF-8 both directions.
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
     for raw in sys.stdin:
         line = raw.strip()
         if not line:
