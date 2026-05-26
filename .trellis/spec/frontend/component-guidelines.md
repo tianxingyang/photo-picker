@@ -88,3 +88,28 @@ Components MUST NOT receive raw OS file paths. The `api/` layer converts every p
 - Reading photo data inside `useEffect` on every render — fetch in `api/`, push into store, subscribe.
 - Inline `() => ...` handlers passed into `React.memo`'d children — defeats memoization.
 - Keeping two transform states "in sync" for paired views — use one shared transform (see Pattern above).
+
+### Common Mistake: dereferencing a `ref` inside a `setState` updater closure
+
+> Discovered 2026-05-27 (task `05-24-ab-compare`): a drag-pan handler blanked the whole app.
+
+**Symptom**: an interaction (e.g. drag then release) throws `Cannot read properties of null` and the entire window goes blank (a render-phase throw with no error boundary unmounts the React tree → only the body background shows).
+
+**Cause**: the `setState` **updater function runs deferred** (React 18 batches via the scheduler). If the updater dereferences a mutable `ref` that a concurrent event has since cleared, it throws — *during render*, not in the event handler.
+
+```tsx
+// ❌ Wrong — dragRef.current may be null by the time the updater runs
+function onPointerMove(e) {
+  if (!dragRef.current) return;            // guard runs now…
+  setView((prev) => ({ ...prev, tx: dragRef.current!.startTx + dx })); // …deref runs later, after pointerup nulled it
+}
+
+// ✅ Correct — snapshot the ref into a local BEFORE setState; close over the local
+function onPointerMove(e) {
+  const drag = dragRef.current;
+  if (!drag) return;
+  setView((prev) => ({ ...prev, tx: drag.startTx + dx }));
+}
+```
+
+**Prevention**: never read `someRef.current` inside a `setState`/`useState` updater closure — read it into a `const` first and capture that. The top-of-handler null guard is not enough; the value can change before the deferred updater executes.
