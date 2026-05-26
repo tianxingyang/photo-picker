@@ -286,18 +286,26 @@ fn load_browse_model(conn: &Connection) -> rusqlite::Result<BrowseModel> {
         .collect();
     groups.sort_by(cmp_group);
 
-    // Ungrouped: anything with no group_members row — singletons (cluster never
-    // emits size-1 components), plus not-yet-analysed and failed photos.
+    // Ungrouped: photos not a member of any `phash_burst` group — singletons
+    // (cluster never emits size-1 components), not-yet-analysed and failed
+    // photos. Method-scoped on purpose: a photo grouped *only* under a future
+    // method (M3 CLIP/faces, same two tables) is excluded from the grouped
+    // bucket by `sg.method=?1` above, so it must surface here rather than
+    // vanish from the browse model entirely. At M1 (single method) this is
+    // equivalent to "no group_members row".
     let ungrouped = {
         let mut stmt = conn.prepare_cached(
             "SELECT p.id, p.path, p.status, p.shot_at, p.is_blurry, p.blur_score, \
              p.exposure_flag, p.analysis_state \
              FROM photos p \
-             LEFT JOIN group_members gm ON gm.photo_id = p.id \
-             WHERE gm.group_id IS NULL",
+             WHERE NOT EXISTS ( \
+                 SELECT 1 FROM group_members gm \
+                 JOIN similar_groups sg ON sg.id = gm.group_id \
+                 WHERE gm.photo_id = p.id AND sg.method = ?1 \
+             )",
         )?;
         let mut v = stmt
-            .query_map([], |r| read_photo(r, 0))?
+            .query_map(params![METHOD], |r| read_photo(r, 0))?
             .collect::<rusqlite::Result<Vec<BrowsePhoto>>>()?;
         v.sort_by(cmp_in_group);
         v
@@ -660,5 +668,40 @@ mod tests {
             .unwrap();
         let model = load_browse_model(&conn).unwrap();
         assert_eq!(model.ungrouped[0].is_blurry, Some(true));
+    }
+
+    #[test]
+    fn photo_grouped_only_under_other_method_surfaces_in_ungrouped() {
+        // Regression: the ungrouped query is scoped to `phash_burst`. A photo
+        // whose only membership is in a non-phash_burst group (e.g. a future
+        // M3 'clip' group) is excluded from the grouped bucket by the method
+        // filter, so it must still appear in ungrouped — never disappear.
+        let conn = mem_conn();
+        ins(
+            &conn,
+            "x",
+            "pending",
+            Some("2026-05-01T10:00:00"),
+            Some(5.0),
+            "done",
+        );
+        conn.execute(
+            "INSERT INTO similar_groups (id, method, params) VALUES ('gc', 'clip', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO group_members (group_id, photo_id) VALUES ('gc', 'x')",
+            [],
+        )
+        .unwrap();
+
+        let model = load_browse_model(&conn).unwrap();
+        assert!(model.groups.is_empty(), "no phash_burst groups exist");
+        assert_eq!(
+            ids(&model.ungrouped),
+            vec!["x"],
+            "other-method member must surface in ungrouped, not vanish"
+        );
     }
 }

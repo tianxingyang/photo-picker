@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { analyzePending } from "./api/analysisApi";
 import { pickFolder } from "./api/dialogApi";
@@ -20,6 +20,16 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // why: hydrate the browse grid on mount so photos from a prior session
+  // (persisted in SQLite) show immediately, not only after a re-import.
+  // loadGroups is a stable zustand action, so this runs once.
+  useEffect(() => {
+    loadGroups().catch((e) => {
+      const { message } = describeAppError(e);
+      setError(`加载照片失败：${message}`);
+    });
+  }, [loadGroups]);
 
   async function onImport() {
     if (busy) return;
