@@ -27,9 +27,18 @@
 
 ---
 
+## Type Check
+
+- Canonical typecheck is **`npx tsc -b`** (the same invocation `package.json`'s `build` uses).
+  Do **not** pass `--noEmit`: this is a composite project (`tsconfig.json` references
+  `tsconfig.node.json`), so forcing `--noEmit` errors with `TS6310: Referenced project
+  may not disable emit`. The root `tsconfig` already sets `noEmit`, so `tsc -b` emits nothing.
+
+---
+
 ## Forbidden Patterns
 
-- `console.log` in committed code. `console.debug` allowed only behind a `DEV` guard until a real logger lands.
+- `console.log` in committed code. `console.debug` allowed only behind a `DEV` guard until a real logger lands. **Gotcha:** `import.meta.env.DEV` needs `src/vite-env.d.ts` containing `/// <reference types="vite/client" />`, or `tsc` fails with `Property 'env' does not exist on type 'ImportMeta'`. The file is the standard Vite scaffold (types ship in `node_modules/vite/client.d.ts`).
 - Inline `() => ...` JSX handlers passed to memoized children — defeats memoization.
 - Direct `@tauri-apps/api` imports outside `src/api/`.
 - Raw OS paths in component props or `<img>` src — must go through `convertFileSrc` in `api/`.

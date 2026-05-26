@@ -63,6 +63,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::echo_via_sidecar,
             commands::photos::scan_folder,
+            commands::photos::set_status,
             commands::analysis::analyze_pending,
             commands::grouping::group_photos,
             commands::grouping::list_groups

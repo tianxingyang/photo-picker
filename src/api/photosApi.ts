@@ -56,3 +56,10 @@ export async function scanFolder(path: string): Promise<ScanResult> {
   // validated narrowing above
   return { photos: (o.photos as PhotoRowRaw[]).map(toPhoto), skipped: o.skipped };
 }
+
+// Tauri v2: JS camelCase `photoId` ↔ Rust snake_case `photo_id`. Shared by
+// group-browse-ui and (future) ab-compare — both call through here, never
+// `invoke` directly (`@tauri-apps/api` only appears in `api/`).
+export async function setPhotoStatus(id: PhotoId, status: PhotoStatus): Promise<void> {
+  await invoke("set_status", { photoId: id, status });
+}

@@ -123,9 +123,21 @@ type AppErrorPayload =
   | { kind: "Db"; message: string }
   | { kind: "Sidecar"; message: string }
   | { kind: "Io"; message: string }
-  | { kind: "NotFound"; message: string };
+  | { kind: "NotFound"; message: string }
+  | { kind: "Validation"; message: string };
 // The final union mirrors the chosen Rust enum once the OPEN above is resolved.
 ```
+
+**`Validation` (established 2026-05-26, task `05-24-keep-reject-status`)** — the canonical kind
+for **command-boundary input/enum validation** (e.g. `set_status` rejects a status
+outside `'pending'|'keep'|'reject'`). Use it for client/argument errors that are
+neither a DB fault, a missing entity (`NotFound`), nor infra (`Io`/`Sidecar`).
+
+> **Paired contract.** `error.rs::AppError` and `src/types/ipc.ts` (`AppErrorPayload`
+> union **and** the `KINDS` array) MUST change together. The frontend's
+> `describeAppError` degrades gracefully on an unknown `kind` (keeps the `message`),
+> so a missed sync won't crash — but it silently drops `kind`-based branching. Adding
+> a new variant on only one side is a contract bug, not a safe no-op.
 
 ---
 

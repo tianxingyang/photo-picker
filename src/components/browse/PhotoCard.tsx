@@ -21,7 +21,11 @@ function PhotoCardImpl({ id, onCompare }: PhotoCardProps) {
   if (!photo) return null;
 
   const handleStatus = (status: PhotoStatus) => {
-    void setStatus(id, status);
+    setStatus(id, status).catch((e) => {
+      // Silent rollback: the status pill flipping back is the feedback. A local
+      // single-row UPDATE almost never fails, so no toast/notice is warranted.
+      if (import.meta.env.DEV) console.debug("setStatus failed", e);
+    });
   };
 
   return (

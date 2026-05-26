@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Review checklist: cargo fmt/clippy -D warnings clean, command returns Result<T,AppError>, new IPC op in ARCHITECTURE.md, new error variant handled by frontend, no unwrap/println, DB held only inside spawn_blocking."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify Validation variant + NotFound mapping match the Rust→Frontend contract; frontend switches on kind, Rust ships codes not prose."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Review: api/ isolation, no console.log, no unresolved promise rejection in PhotoCard .catch, no any, prettier + ESLint clean."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify optimistic-update-then-rollback contract in groupsStore.setStatus and per-id selector usage."}
