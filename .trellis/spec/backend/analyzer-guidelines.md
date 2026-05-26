@@ -47,3 +47,34 @@ arr = np.asarray(gray_img, dtype=np.uint8)
 
 - Degenerate inputs must not crash. `exposure.score` returns `(0.0, "normal")` for a zero-size array; `blur` returns `0.0` (→ flagged blurry) for images smaller than the 3×3 Laplacian kernel — these are intentional, documented defaults, not silent failures.
 - Threshold comparisons that flag at a boundary use `>=` (e.g. clip fraction `>= clip_ratio`) so an exactly-at-threshold image is flagged rather than missed.
+
+---
+
+## Scenario: HEIC → webview display transcode (the `transcode` op)
+
+> **Established 2026-05-27** (task `05-24-ab-compare`, D5). The reusable recipe for showing a HEIC/HEIF image in the webview — WebView2/WebKit won't render HEIC in `<img>`. **Reuse this op for any display-side HEIC need** (the group-browse `HeicPlaceholder` upgrade, export thumbnails, etc.); do not add a second decode path.
+
+### Trigger
+Cross-layer contract: a new sidecar op + a new Rust command + a frontend display URL. This is *not* a pure analyzer — `transcode` is the only op that **writes a file** (the decoded JPEG). It still obeys the analyzer rules (raise on bad input, no stdout, `register_heif_opener()` is idempotent and self-contained — don't rely on `analyze` being imported first).
+
+### Signatures
+- **Python** `analyzers/transcode.py` `run(payload) -> dict`, registered in `main.py` `OPS["transcode"]` + `analyzers/__init__.py` `__all__`.
+- **Rust** `commands::photos::transcode_for_display(photo_id: String, state) -> Result<String, AppError>`, registered in `lib.rs` `generate_handler!`.
+- **TS** `api/displayApi.ts` `transcodeForDisplay(id: PhotoId): Promise<PhotoSrc>`.
+
+### Contract
+- op request: `{ "path": str, "dest": str, "maxSide": int? }` (default `maxSide=4096`, clamped `max(1, int)`). The **caller (Rust) owns the cache `dest` path** — the op only decodes→encodes.
+- op response: `{ "dest": str, "width": int, "height": int }`.
+- Decode→`convert("RGB")` (drop alpha/HDR for JPEG safety)→downscale-only to `maxSide`→`save(JPEG, quality=90)`. **Atomic write**: save to `dest + ".part"` then `os.replace(tmp, dest)` so a concurrent reader never sees a half-written file.
+- Rust cache key: `blake3(format!("{path}|{mtime_nanos}"))` → `std::env::temp_dir()/photo-picker-display/<key>.jpg`. `dest.exists()` → fast-return (no re-transcode); the `path+mtime` key invalidates when the source changes. **No active cleanup in M1** — OS temp self-cleans; LRU/startup-purge is M2.
+- Rust returns the **temp path string**; the api layer does `convertFileSrc(dest)` → `PhotoSrc` (holds the "components never see raw paths" rule; OS temp is covered by `assetProtocol.scope ["**"]`).
+
+### Validation & error matrix (Rust command)
+- missing `photo_id` row → `AppError::NotFound` (DB `query_row` → `QueryReturnedNoRows`).
+- op ran but image is corrupt (`Ok(Err(e))`) → `AppError::Sidecar` (frontend falls back to `HeicPlaceholder`).
+- transport/timeout (`Err(e)`) → `AppError::Sidecar` (sidecar may be down). Single HEIC transcode is well within `CALL_TIMEOUT=30s`.
+- DB lock: query path inside `spawn_blocking + blocking_lock`, **release before the sidecar `.await`** (clone the sidecar `Arc` under a brief lock, same as `echo_via_sidecar`).
+
+### Tests required
+- Python (`tests/test_transcode.py`): JPEG/PNG/RGBA round-trip + format==JPEG/mode==RGB; downscale preserves aspect (assert exact `w/h`); small image **not** upscaled; `maxSide=0`→clamped ≥1; bad path raises; dest dir auto-created; HEIC round-trip **skipped** if `Image.save(format="HEIF")` is unavailable in the env.
+- Rust: `transcode_cache_key` stable for same `path+mtime`, differs when `mtime` changes; missing-id → NotFound (helper-level).

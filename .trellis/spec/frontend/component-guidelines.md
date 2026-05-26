@@ -63,8 +63,28 @@ Components MUST NOT receive raw OS file paths. The `api/` layer converts every p
 
 ---
 
+## Overlay / Modal Pattern (project-specific)
+
+> **Established 2026-05-27** (task `05-24-ab-compare`, the app's first full-screen overlay — the A/B compare viewer). Future modals/sheets follow this.
+
+- **App-level mount, store-driven visibility**: the overlay component renders in `App.tsx` and `return null`s when closed; open/close state lives in a per-domain Zustand store (e.g. `compareStore.open`), not lifted through props. The trigger calls a store action (`openFor(id)`); the overlay subscribes to `open`.
+- **Focus trap + restore**: on open, move focus into the overlay and trap `Tab` within it so the underlying grid is not reachable; on close, **restore focus to the triggering element**. (`escape-routes` / `focus-management`.)
+- **Esc + visible close**: `Esc` (via `useHotkey`, gated on `open`) and an on-screen close control both dismiss. Keyboard shortcuts that act on content (e.g. `1`/`2`) are ALSO exposed as on-screen buttons.
+- **Enter/exit motion**: fade + subtle `scale(.98→1)` ~150–200ms, exit faster (~120ms), `transform/opacity` only, wrapped in `motion-safe:` so `prefers-reduced-motion` drops the movement.
+
+## Pattern: synced transform across panes (zoom/pan)
+
+> A single shared transform state drives BOTH panes — never per-pane state kept "in sync".
+
+**Problem**: two side-by-side images must zoom/pan in lockstep. Two transform states + a sync effect drift and can feedback-loop.
+
+**Solution**: one `useState<{scale,tx,ty}>` in the parent (`view` is UI-ephemeral → `useState`, not store), passed as the identical prop to both panes; each pane applies it via CSS `transform: translate(tx,ty) scale(scale)`. Reset `view` to identity on pair change / swap / close (a `useEffect` on the pair ids). Wheel zoom is anchored to the cursor: `tx' = cx - (cx - tx) * (scale'/scale)`.
+
+**Why**: a single source of truth makes "locked" the default — drift is structurally impossible — and `transform`-only keeps it on the GPU compositor (no reflow).
+
 ## Common Mistakes
 
 - Passing raw paths from `invoke` results into `<img src>` — fails under Tauri CSP. Must go through `convertFileSrc` in `api/`.
 - Reading photo data inside `useEffect` on every render — fetch in `api/`, push into store, subscribe.
 - Inline `() => ...` handlers passed into `React.memo`'d children — defeats memoization.
+- Keeping two transform states "in sync" for paired views — use one shared transform (see Pattern above).
