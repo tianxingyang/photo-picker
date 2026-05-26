@@ -49,6 +49,7 @@ Stay in `useState` otherwise.
 - Actions are methods on the store: `addPhotos(photos)`, `setStatus(id, status)`. No external setters.
 - Async actions return `Promise<void>` and resolve after the underlying `invoke` + state update.
 - Status changes (keep/reject/pending) MUST be optimistic — user expects instant feedback. Write to store first, then `invoke`, rollback on error.
+- **Optimistic writes that can fire in a burst (or race a `load()`) MUST be single-flight per id, and roll back to the last *persisted* baseline — not to a `prev` snapshot captured before the `await`.** Naive `const prev = get().byId[id]; …; catch { set(prev) }` has a race: a rapid keep→reject leaves the store diverged from the DB, and a `load()` that replaced `byId` mid-write gets clobbered (or a removed row resurrected) by the stale rollback. Pattern (see `groupsStore.setStatus`): keep a **transient, non-state** `desiredStatus: Map<Id,V>` + `writing: Set<Id>` (module-level, so they never trigger a re-render); the optimistic store write always shows the latest click; one runner per id drains `desiredStatus` so writes land in click order; on failure revert **only the changed field** to the last persisted value, guarded by `if (!s.byId[id]) return s;` so a `load()`-removed row is never resurrected.
 
 ---
 
@@ -64,3 +65,4 @@ Stay in `useState` otherwise.
 - Reading the whole store (`useStore()`) inside a list item — every state change re-renders every row. Use a per-id selector.
 - Mutating store state directly (`s.byId[id].status = ...`). Zustand requires `set((s) => ({ ...s, ... }))` unless the Immer middleware is enabled — and that choice must be consistent across stores.
 - Hydrating photo data outside the store (e.g. via a parallel React Query) — two sources of truth.
+- **Stale optimistic rollback.** Capturing `prev` before the `await` and rolling the whole row back to it on failure: a concurrent click or `load()` makes that snapshot stale, so the rollback clobbers newer state or resurrects a removed row. Fix: per-id single-flight + revert only the changed field to the last persisted baseline (see Actions). Discovered 2026-05-26, task `05-24-keep-reject-status` (`setStatus`).
