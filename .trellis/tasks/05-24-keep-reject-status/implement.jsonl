@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError contract + Rust→Frontend rule: commands return Result<T,AppError>, frontend switches on kind, adding a new branch REQUIRES adding the Rust variant first — drives the new Validation variant."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "rusqlite + WAL conventions for the single-row UPDATE (params!, no schema change since photos.status already exists in 0001)."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Required: #[tauri::command] returns Result<T,AppError>; new IPC op documented in ARCHITECTURE.md; spawn_blocking for DB; forbidden unwrap/println; Rust unit tests next to module."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Status changes MUST be optimistic (write store→invoke→rollback on error); actions are store methods returning Promise<void>; per-id selectors."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "api/ isolation (@tauri-apps/api only in api/), no console.log (console.debug behind DEV guard), every async store action handles both paths / no unresolved rejection, String(e) forbidden on invoke rejection."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Branded PhotoId/PhotoStatus types at the api boundary; TS strict."}

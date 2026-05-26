@@ -7,6 +7,7 @@ pub enum AppError {
     Db(String),
     Io(String),
     NotFound(String),
+    Validation(String),
 }
 
 impl fmt::Display for AppError {
@@ -16,6 +17,7 @@ impl fmt::Display for AppError {
             Self::Db(m) => write!(f, "Db: {m}"),
             Self::Io(m) => write!(f, "Io: {m}"),
             Self::NotFound(m) => write!(f, "NotFound: {m}"),
+            Self::Validation(m) => write!(f, "Validation: {m}"),
         }
     }
 }

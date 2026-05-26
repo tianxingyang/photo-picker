@@ -4,11 +4,12 @@ export type AppErrorPayload =
   | { kind: "Sidecar"; message: string }
   | { kind: "Db"; message: string }
   | { kind: "Io"; message: string }
-  | { kind: "NotFound"; message: string };
+  | { kind: "NotFound"; message: string }
+  | { kind: "Validation"; message: string };
 
 export type AppErrorKind = AppErrorPayload["kind"];
 
-const KINDS: readonly string[] = ["Sidecar", "Db", "Io", "NotFound"];
+const KINDS: readonly string[] = ["Sidecar", "Db", "Io", "NotFound", "Validation"];
 
 // Normalize an unknown thrown value into a kind (when it matches the Rust
 // contract) plus a human-readable message.

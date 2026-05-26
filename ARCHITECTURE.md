@@ -87,6 +87,18 @@
             └─> 前端按组展示
 ```
 
+## 数据流：保留/淘汰/待定状态
+
+```
+用户在卡片上点保留 / 淘汰 / 待定
+  └─> Frontend: groupsStore.setStatus 乐观写 store（状态标签即时翻）
+       └─> invoke('set_status', { photoId, status })
+            └─> Rust: 枚举校验（非法值→Validation）
+                 └─> spawn_blocking 内单行 UPDATE photos SET status
+                      └─> 0 行受影响→NotFound；成功→返回 ()（D4=不联动，只改当前张）
+                           └─> 成功保留乐观态 / 失败回滚 prev 并 rethrow（前端 .catch 静默吞）
+```
+
 ## IPC 协议（Rust ↔ Python）
 
 JSON-Lines over stdio，每行一个 JSON 对象。
