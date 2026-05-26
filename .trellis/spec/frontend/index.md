@@ -15,9 +15,9 @@ This directory contains guidelines for frontend development. Fill in each file w
 | Guide | Description | Status |
 |-------|-------------|--------|
 | [Directory Structure](./directory-structure.md) | `src/` layout, `api/` isolation; co-location OPEN | Filled (1 OPEN) |
-| [Component Guidelines](./component-guidelines.md) | Function components, photo-URL rule; styling OPEN | Filled (1 OPEN) |
+| [Component Guidelines](./component-guidelines.md) | Function components, photo-URL rule; styling: Tailwind+shadcn | Filled |
 | [Hook Guidelines](./hook-guidelines.md) | Tauri-event / invoke wrappers, hook categories | Filled |
-| [State Management](./state-management.md) | Zustand patterns, optimistic UI; partitioning OPEN | Filled (1 OPEN) |
+| [State Management](./state-management.md) | Zustand patterns, optimistic UI; partitioning: per-domain | Filled |
 | [Quality Guidelines](./quality-guidelines.md) | Prettier + ESLint, forbidden / required patterns | Filled |
 | [Type Safety](./type-safety.md) | TS strict + branded types; Rust↔TS sharing OPEN | Filled (1 OPEN) |
 

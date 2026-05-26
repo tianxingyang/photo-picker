@@ -16,12 +16,11 @@ Zustand. Server state via Tauri invoke + events (no React Query in MVP).
 
 ---
 
-## Store Partitioning — OPEN
+## Store Partitioning
 
-> **DECISION pending**:
-> - **Candidate A — single mega-store**: one `appStore` holds everything. Pros: zero cross-store wiring. Cons: large file; every action ships in every chunk.
-> - **Candidate B — per-domain stores**: `photosStore`, `groupsStore`, `uiStore`, `progressStore`. Pros: clear ownership. Cons: cross-store derivations need manual sync.
-> - **Candidate C — slice pattern**: one store, slices composed (`photosSlice`, `groupsSlice`, ...). Pros: domain isolation without store boundaries. Cons: slightly more setup boilerplate.
+**DECIDED (2026-05-26, task `05-24-group-browse-ui`)**: **per-domain stores** (was Candidate B).
+
+One store per domain: `photosStore` (import list — `byId`/`order`), `groupsStore` (browse model — `byId`/`groups`/`ungroupedIds`/`loaded` + optimistic `setStatus`). Add `uiStore` / `progressStore` as needs arise. Cross-store derivations are computed in selectors/components, not synced into a store body. Rationale: clear ownership and it matches the existing `photosStore`; the mega-store (one growing file) and slice pattern (extra boilerplate) were rejected for an app this size.
 
 ---
 

@@ -153,6 +153,167 @@ fn derive_id(method: &str, members: &[String]) -> String {
     blake3::hash(payload.as_bytes()).to_hex().to_string()
 }
 
+// ---------------------------------------------------------------------------
+// Browse model: read groups + their member photos (with analysis fields and
+// status) plus the "ungrouped" bucket, for the group-browse UI. Read-only, so
+// no single-flight guard — just the standard spawn_blocking + blocking_lock.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowsePhoto {
+    pub id: String,
+    pub path: String,
+    pub status: String,
+    pub shot_at: Option<String>,
+    pub is_blurry: Option<bool>,
+    pub blur_score: Option<f64>,
+    pub exposure_flag: Option<String>,
+    pub analysis_state: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseGroup {
+    pub id: String,
+    pub photos: Vec<BrowsePhoto>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseModel {
+    pub groups: Vec<BrowseGroup>,
+    pub ungrouped: Vec<BrowsePhoto>,
+}
+
+/// Read the full browse model: every `phash_burst` group with its members
+/// (sorted by capture time, sharpest first as tiebreak) plus the ungrouped
+/// bucket (singletons + not-yet-analysed + failed — anything not in a group).
+#[tauri::command]
+pub async fn list_groups(state: State<'_, AppState>) -> Result<BrowseModel, AppError> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<BrowseModel> {
+        let conn = db.blocking_lock();
+        load_browse_model(&conn)
+    })
+    .await
+    .map_err(|e| AppError::Io(e.to_string()))?
+    .map_err(|e| AppError::Db(e.to_string()))
+}
+
+/// Read 8 photo columns into a `BrowsePhoto`, starting at column `base`. The
+/// SELECT column order below is the contract: id, path, status, shot_at,
+/// is_blurry, blur_score, exposure_flag, analysis_state.
+fn read_photo(r: &rusqlite::Row, base: usize) -> rusqlite::Result<BrowsePhoto> {
+    let is_blurry: Option<i64> = r.get(base + 4)?;
+    Ok(BrowsePhoto {
+        id: r.get(base)?,
+        path: r.get(base + 1)?,
+        status: r.get(base + 2)?,
+        shot_at: r.get(base + 3)?,
+        is_blurry: is_blurry.map(|v| v != 0),
+        blur_score: r.get(base + 5)?,
+        exposure_flag: r.get(base + 6)?,
+        analysis_state: r.get(base + 7)?,
+    })
+}
+
+/// Ascending compare with NULLs last. ISO8601 strings sort lexically.
+/// Fully-qualified `std::cmp::Ordering` — the module-level `Ordering` import is
+/// `atomic::Ordering`, a different type.
+fn cmp_opt_asc(a: Option<&str>, b: Option<&str>) -> std::cmp::Ordering {
+    match (a, b) {
+        (Some(x), Some(y)) => x.cmp(y),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
+}
+
+/// Descending compare (higher first) with NULLs last, for blur_score (f64).
+fn cmp_opt_f64_desc(a: Option<f64>, b: Option<f64>) -> std::cmp::Ordering {
+    match (a, b) {
+        (Some(x), Some(y)) => y.partial_cmp(&x).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
+}
+
+/// Within-group order: capture time ascending, then sharpest first, then id.
+fn cmp_in_group(a: &BrowsePhoto, b: &BrowsePhoto) -> std::cmp::Ordering {
+    cmp_opt_asc(a.shot_at.as_deref(), b.shot_at.as_deref())
+        .then_with(|| cmp_opt_f64_desc(a.blur_score, b.blur_score))
+        .then_with(|| a.id.cmp(&b.id))
+}
+
+/// Group order: by earliest member capture time (members already sorted, so
+/// the first member is earliest), NULLs last, then group id.
+fn cmp_group(a: &BrowseGroup, b: &BrowseGroup) -> std::cmp::Ordering {
+    let ax = a.photos.first().and_then(|p| p.shot_at.as_deref());
+    let bx = b.photos.first().and_then(|p| p.shot_at.as_deref());
+    cmp_opt_asc(ax, bx).then_with(|| a.id.cmp(&b.id))
+}
+
+fn load_browse_model(conn: &Connection) -> rusqlite::Result<BrowseModel> {
+    // Grouped members. Build a map keyed by group id, then sort within and across.
+    let mut by_group: std::collections::HashMap<String, Vec<BrowsePhoto>> =
+        std::collections::HashMap::new();
+    {
+        let mut stmt = conn.prepare_cached(
+            "SELECT gm.group_id, p.id, p.path, p.status, p.shot_at, p.is_blurry, \
+             p.blur_score, p.exposure_flag, p.analysis_state \
+             FROM group_members gm \
+             JOIN photos p ON p.id = gm.photo_id \
+             JOIN similar_groups sg ON sg.id = gm.group_id \
+             WHERE sg.method = ?1",
+        )?;
+        let rows = stmt.query_map(params![METHOD], |r| {
+            let gid: String = r.get(0)?;
+            Ok((gid, read_photo(r, 1)?))
+        })?;
+        for row in rows {
+            let (gid, photo) = row?;
+            by_group.entry(gid).or_default().push(photo);
+        }
+    }
+    let mut groups: Vec<BrowseGroup> = by_group
+        .into_iter()
+        .map(|(id, mut photos)| {
+            photos.sort_by(cmp_in_group);
+            BrowseGroup { id, photos }
+        })
+        .collect();
+    groups.sort_by(cmp_group);
+
+    // Ungrouped: photos not a member of any `phash_burst` group — singletons
+    // (cluster never emits size-1 components), not-yet-analysed and failed
+    // photos. Method-scoped on purpose: a photo grouped *only* under a future
+    // method (M3 CLIP/faces, same two tables) is excluded from the grouped
+    // bucket by `sg.method=?1` above, so it must surface here rather than
+    // vanish from the browse model entirely. At M1 (single method) this is
+    // equivalent to "no group_members row".
+    let ungrouped = {
+        let mut stmt = conn.prepare_cached(
+            "SELECT p.id, p.path, p.status, p.shot_at, p.is_blurry, p.blur_score, \
+             p.exposure_flag, p.analysis_state \
+             FROM photos p \
+             WHERE NOT EXISTS ( \
+                 SELECT 1 FROM group_members gm \
+                 JOIN similar_groups sg ON sg.id = gm.group_id \
+                 WHERE gm.photo_id = p.id AND sg.method = ?1 \
+             )",
+        )?;
+        let mut v = stmt
+            .query_map(params![METHOD], |r| read_photo(r, 0))?
+            .collect::<rusqlite::Result<Vec<BrowsePhoto>>>()?;
+        v.sort_by(cmp_in_group);
+        v
+    };
+
+    Ok(BrowseModel { groups, ungrouped })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,5 +484,224 @@ mod tests {
         let b = derive_id(METHOD, &["y".to_string(), "x".to_string()]);
         assert_eq!(a, b, "id depends on the set, not member order");
         assert_eq!(a.len(), 64, "blake3 hex digest");
+    }
+
+    // --- browse model -----------------------------------------------------
+
+    /// Insert a photo with explicit browse-relevant columns.
+    fn ins(
+        conn: &Connection,
+        id: &str,
+        status: &str,
+        shot_at: Option<&str>,
+        blur: Option<f64>,
+        analysis_state: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO photos (id, path, status, created_at, shot_at, blur_score, analysis_state) \
+             VALUES (?1, ?2, ?3, '2026-01-01T00:00:00Z', ?4, ?5, ?6)",
+            params![id, format!("/{id}.jpg"), status, shot_at, blur, analysis_state],
+        )
+        .unwrap();
+    }
+
+    fn add_group(conn: &Connection, gid: &str, members: &[&str]) {
+        conn.execute(
+            "INSERT INTO similar_groups (id, method, params) VALUES (?1, ?2, '{}')",
+            params![gid, METHOD],
+        )
+        .unwrap();
+        for m in members {
+            conn.execute(
+                "INSERT INTO group_members (group_id, photo_id) VALUES (?1, ?2)",
+                params![gid, m],
+            )
+            .unwrap();
+        }
+    }
+
+    fn ids(photos: &[BrowsePhoto]) -> Vec<&str> {
+        photos.iter().map(|p| p.id.as_str()).collect()
+    }
+
+    #[test]
+    fn within_group_sorted_by_shot_at_then_sharpness() {
+        let conn = mem_conn();
+        // Out-of-insertion-order capture times; "b" and "c" share a time so the
+        // sharper (higher blur_score) one wins the tiebreak.
+        ins(
+            &conn,
+            "a",
+            "pending",
+            Some("2026-05-01T10:00:00"),
+            Some(50.0),
+            "done",
+        );
+        ins(
+            &conn,
+            "b",
+            "pending",
+            Some("2026-05-01T09:00:00"),
+            Some(10.0),
+            "done",
+        );
+        ins(
+            &conn,
+            "c",
+            "pending",
+            Some("2026-05-01T09:00:00"),
+            Some(99.0),
+            "done",
+        );
+        add_group(&conn, "g1", &["a", "b", "c"]);
+
+        let model = load_browse_model(&conn).unwrap();
+        assert_eq!(model.groups.len(), 1);
+        // 09:00 sharper(c) -> 09:00 blurrier(b) -> 10:00(a)
+        assert_eq!(ids(&model.groups[0].photos), vec!["c", "b", "a"]);
+        assert!(model.ungrouped.is_empty());
+    }
+
+    #[test]
+    fn ungrouped_holds_singletons_unanalysed_and_failed() {
+        let conn = mem_conn();
+        ins(
+            &conn,
+            "g_a",
+            "pending",
+            Some("2026-05-01T08:00:00"),
+            Some(20.0),
+            "done",
+        );
+        ins(
+            &conn,
+            "g_b",
+            "pending",
+            Some("2026-05-01T08:30:00"),
+            Some(30.0),
+            "done",
+        );
+        add_group(&conn, "g1", &["g_a", "g_b"]);
+        // not in any group:
+        ins(
+            &conn,
+            "single",
+            "keep",
+            Some("2026-05-01T07:00:00"),
+            Some(40.0),
+            "done",
+        );
+        ins(&conn, "pending_one", "pending", None, None, "pending");
+        ins(&conn, "failed_one", "reject", None, None, "failed");
+
+        let model = load_browse_model(&conn).unwrap();
+        let ung = ids(&model.ungrouped);
+        // shot_at asc, NULLs last; single(07:00) first, then the two NULLs by id.
+        assert_eq!(ung, vec!["single", "failed_one", "pending_one"]);
+        // grouped photos never leak into ungrouped.
+        assert!(!ung.contains(&"g_a") && !ung.contains(&"g_b"));
+    }
+
+    #[test]
+    fn groups_ordered_by_earliest_capture_time() {
+        let conn = mem_conn();
+        ins(
+            &conn,
+            "late1",
+            "pending",
+            Some("2026-05-02T10:00:00"),
+            Some(10.0),
+            "done",
+        );
+        ins(
+            &conn,
+            "late2",
+            "pending",
+            Some("2026-05-02T11:00:00"),
+            Some(10.0),
+            "done",
+        );
+        add_group(&conn, "g_late", &["late1", "late2"]);
+        ins(
+            &conn,
+            "early1",
+            "pending",
+            Some("2026-05-01T10:00:00"),
+            Some(10.0),
+            "done",
+        );
+        ins(
+            &conn,
+            "early2",
+            "pending",
+            Some("2026-05-01T11:00:00"),
+            Some(10.0),
+            "done",
+        );
+        add_group(&conn, "g_early", &["early1", "early2"]);
+
+        let model = load_browse_model(&conn).unwrap();
+        let order: Vec<&str> = model.groups.iter().map(|g| g.id.as_str()).collect();
+        assert_eq!(order, vec!["g_early", "g_late"]);
+    }
+
+    #[test]
+    fn empty_db_yields_empty_model() {
+        let conn = mem_conn();
+        let model = load_browse_model(&conn).unwrap();
+        assert!(model.groups.is_empty());
+        assert!(model.ungrouped.is_empty());
+    }
+
+    #[test]
+    fn is_blurry_int_maps_to_bool() {
+        let conn = mem_conn();
+        ins(
+            &conn,
+            "x",
+            "pending",
+            Some("2026-05-01T10:00:00"),
+            Some(5.0),
+            "done",
+        );
+        conn.execute("UPDATE photos SET is_blurry = 1 WHERE id = 'x'", [])
+            .unwrap();
+        let model = load_browse_model(&conn).unwrap();
+        assert_eq!(model.ungrouped[0].is_blurry, Some(true));
+    }
+
+    #[test]
+    fn photo_grouped_only_under_other_method_surfaces_in_ungrouped() {
+        // Regression: the ungrouped query is scoped to `phash_burst`. A photo
+        // whose only membership is in a non-phash_burst group (e.g. a future
+        // M3 'clip' group) is excluded from the grouped bucket by the method
+        // filter, so it must still appear in ungrouped — never disappear.
+        let conn = mem_conn();
+        ins(
+            &conn,
+            "x",
+            "pending",
+            Some("2026-05-01T10:00:00"),
+            Some(5.0),
+            "done",
+        );
+        conn.execute(
+            "INSERT INTO similar_groups (id, method, params) VALUES ('gc', 'clip', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO group_members (group_id, photo_id) VALUES ('gc', 'x')",
+            [],
+        )
+        .unwrap();
+
+        let model = load_browse_model(&conn).unwrap();
+        assert!(model.groups.is_empty(), "no phash_burst groups exist");
+        assert_eq!(
+            ids(&model.ungrouped),
+            vec!["x"],
+            "other-method member must surface in ungrouped, not vanish"
+        );
     }
 }

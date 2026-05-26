@@ -35,14 +35,15 @@ Components MUST NOT receive raw OS file paths. The `api/` layer converts every p
 
 ---
 
-## Styling Patterns — OPEN
+## Styling Patterns
 
-> **DECISION pending**:
-> - **Candidate A — CSS Modules** (`*.module.css`): ergonomic Vite default, scoped class names.
-> - **Candidate B — Tailwind**: utility-first, fast iteration, larger learning surface.
-> - **Candidate C — vanilla-extract**: typed CSS-in-TS, zero runtime cost.
->
-> Global tokens regardless of choice: `src/styles/tokens.css` exposes CSS custom properties for color/spacing.
+**DECIDED (2026-05-26, task `05-24-group-browse-ui`)**: **Tailwind v3 + shadcn/ui**.
+
+- Tailwind utility classes for layout/spacing/state. Config in `tailwind.config.js` (`content`: `index.html` + `src/**/*.{ts,tsx}`); PostCSS in `postcss.config.js`.
+- Semantic color tokens are CSS custom properties declared in `src/styles.css` `:root` (`--background`, `--surface`, `--foreground`, `--muted-foreground`, `--border`, `--primary`, `--keep`, `--reject`, `--pending`, `--warn`, `--info`) and mapped into the Tailwind theme. Components use semantic classes (`bg-surface`, `text-muted-foreground`, `border-border`) — never raw hex.
+- Dark is the only theme (photo-review canvas, kept neutral so photo colour reads true); `<html class="dark">` is fixed.
+- shadcn/ui components are added on demand; the `cn()` helper (`clsx` + `tailwind-merge`) lives in `src/lib/utils.ts`. Do not bulk-import shadcn.
+- Rejected: CSS Modules (less leverage from shadcn/ui), vanilla-extract (heaviest config, least ecosystem leverage).
 
 ---
 
