@@ -41,7 +41,7 @@ parent 持有、需在对应子任务 **planning 阶段** 敲定（拆分阶段�
 - **D3 相似分组策略 — 已锁定：纯 pHash + 连通分量** ✅（用户 2026-05-25 决定）。**不用时间窗口**；按 64-bit pHash 汉明距离做单链/连通分量聚类，阈值默认 8（存 `params` 可调）。孤立照片不分组。
 - **D6 分组数据模型 — 已锁定：多方法多对多 + 落库** ✅（用户 2026-05-25 决定）。新增 `similar_groups(id, method, params)` + `group_members(group_id, photo_id)` junction；一张照片可属多组（跨方法），M1 只写 `method='phash_burst'`，M3 语义/人脸分组复用同两表、零迁移。组 id 由 `blake3(method + sorted member ids)` 派生以保证重跑幂等。
 - **D4 组内联动 — 已锁定：不联动** ✅（用户 2026-05-24 决定）。设 `keep` 只改当前张，同组其余保持原状态（默认 `pending`），由用户手动逐张淘汰；不做自动 reject。
-- **D5 HEIC 在 webview 的解码/显示路径** — ab-compare 决定（分析侧读取走 pillow-heif 已定）。
+- **D5 HEIC 在 webview 的解码/显示路径 — 已锁定：sidecar 按需转码** ✅（用户 2026-05-26，ab-compare 敲定）。复用 Python `pillow-heif` 新增 `transcode` op：HEIC→临时 JPEG/PNG（按 `源路径+mtime` 缓存到 OS temp），前端走 `convertFileSrc` 显示。group-browse 现有 `HeicPlaceholder` 后续可升级为同路径真显示。资产协议前置项已在 group-browse-ui 解决（`assetProtocol.enable + scope ["**"]`），不再 open。
 
 子任务敲定 D1–D5 后，回填本表对应行，保持单一事实源。
 

@@ -21,12 +21,20 @@
 - status 落库 → keep-reject-status（本组件只 emit 选择事件）。
 - 多图（>2）对比、差异高亮（M2+）。
 
+## 已确认事实（代码勘察 2026-05-26）
+
+- **资产协议前置项 — 已解决** ✅：group-browse-ui(#5) 已在 `tauri.conf.json` 启用 `app.security.assetProtocol = { enable: true, scope: ["**"] }`，CSP 也已放行 `img-src ... asset: http://asset.localhost data: blob:`。JPEG/PNG 经 `convertFileSrc` 已能在 webview 渲染（group-browse 网格已验证）。本任务不再需要动资产协议配置。
+- **HEIC 仍是占位** ：`src/components/browse/HeicPlaceholder.tsx` 注释明写「Real decode path is deferred to ab-compare (D5)」；`BrowsePhoto.isHeic` 标志已存在。D5 在本任务真正落地。
+- **sidecar 已能解码 HEIC**：`python/pyproject.toml` 已依赖 `pillow-heif`；分析器走 JSON-Lines over stdio，各 `analyzers/<op>.py` 暴露 `run(payload)->dict`（Rust 侧 `src-tauri/src/sidecar/` 管理）。→ 加一个「转码出临时 JPEG/PNG」的 op 与现有架构同构，复用已有依赖。
+- **挂载点已就绪**：`src/App.tsx` 的 `onCompare(id: PhotoId)` 现为占位（弹提示）；group-browse 的 `GroupBrowseView`/`PhotoCard` 经 `onCompare` 上抛点击。本任务负责把 viewer 接到这个 seam，并定义「打开后展示哪两张 + 怎么切」。
+- **栈**：React18 + TS + Vite + Tailwind3 + zustand + clsx/tailwind-merge；暗色单主题，语义 token（`--primary #7C3AED`、`--keep/--reject/--pending`、`--surface` 等）已在 group-browse 落地，本任务沿用。
+
 ## 决策点
 
-- **D5 HEIC 在 webview 的显示路径**：WebView2/WebKit 不一定原生渲染 HEIC。需定：sidecar 转码出临时 JPEG/PNG 供显示，还是其它方案。本任务敲定并回填 parent PRD（影响 group-browse-ui 的 HEIC 显示）。
-- 布局：左右并排 vs 叠加切换。
-
-> ⚠️ **资产协议前置项（import-scan 评审 #4 发现）**：`photosApi.toPhoto` 已用 `convertFileSrc(path)` 生成 `Photo.src`（`http://asset.localhost/...`），但 import-scan 阶段 **从不渲染图片**，所以该 URL 至今未生效。本任务（或 group-browse-ui，谁先渲染图片谁负责）在 `<img src>` 之前**必须**：① 在 `tauri.conf.json` 加 `app.security.assetProtocol = { enable: true, scope: [...] }`——仅 CSP 写 `asset:` **不会**注册该协议处理器；② scope 需覆盖用户导入的任意 OS 路径（导入目录是动态的，可能需运行时用 `tauri-plugin-fs` 的 scope API 动态授权，而非静态配置）。否则所有图片 403/加载失败。这一项推翻了 import-scan design §7「CSP 已够、无需改」的判断。
+- **D5 HEIC 显示路径 — 已锁定：sidecar 按需转码** ✅（用户 2026-05-26 决定）。复用 Python `pillow-heif`，新增 `transcode` op：HEIC → 临时 JPEG/PNG，按 `源路径 + mtime` 派生缓存键写入 OS temp，命中即复用；前端拿临时路径走已验证的 `convertFileSrc` 显示。零新依赖、与 JSON-Lines sidecar 架构同构。临时文件生命周期与失败回退在 design.md 细化。与 M2「批量缩略图 + WebP 缓存」边界清晰：此处是 lazy/按需/只转当前对比的 2 张、保留可缩放高保真。
+- **布局 — 已锁定：左右并排** ✅（用户 2026-05-26 决定）。两图左右并排，缩放（滚轮/按钮）与平移（拖拽）锁定同步；对应键盘 `1`=左、`2`=右。叠加/闪烁切换属 M2+。
+- **打开/导航 seam — 已锁定：App 级全屏 overlay + 组内胶片条** ✅（用户 2026-05-26 决定）。点击网格瓦片打开 overlay；点击张=A、默认 B=同组下一张；底部胶片条展示整组缩略图，点击设 B、可 A↔B 互换、方向键在组内步进 B；`1`/`2` 给 A/B 打 `keep`（直接调已就绪的 `groupsStore.setStatus`，落库走已完成的 keep-reject-status）；Esc 关闭。`onCompare(id)` 现有单 id 签名不变——viewer 由 id 反查 `groupsStore` 取所属组；孤立/未分组照片打开后 B 为空槽、给「无同组照片可对比」提示。
+- **打开/导航 seam**：viewer 如何被打开、默认对比哪两张、如何换另一张（点击张 + 同组下一张？组内胶片条选两张？）。`onCompare` 现仅传单个 id，需定 pair 来源与挂载形态（App 级 overlay/modal）。
 
 ## 软依赖
 
@@ -34,8 +42,12 @@
 
 ## Acceptance Criteria
 
-- [ ] 给两张图，缩放一张另一张同步缩放、平移同步联动。
-- [ ] 按 `1`/`2` 触发对应选择回调，参数含被选照片 id。
-- [ ] 大图（数千万像素）对比不卡顿、不内存爆。
-- [ ] HEIC 两张也能正常显示对比（落实 D5）。
-- [ ] 三层 formatter 通过。
+- [ ] 网格点击瓦片 → 打开全屏 overlay，左=点击张(A)、右=同组下一张(B)；非同组成员不出现在胶片条。
+- [ ] 缩放（滚轮/按钮）与平移（拖拽）在两图间锁定同步：操作任一图，另一图同步变换；切换 pair 时变换归位。
+- [ ] 底部胶片条点击缩略图把该张设为 B；A↔B 可互换；方向键 ←/→ 在组内步进 B；当前 A/B 在胶片条有非纯色高亮（描边+角标）。
+- [ ] 键盘 `1`=保留左(A)、`2`=保留右(B)，并有等效屏幕按钮；按下后对应照片 `status` 落库为 `keep`（调 `groupsStore.setStatus`，乐观更新），pane 上状态标即时反映；按 D4 只改当前张、不联动同组。
+- [ ] HEIC 两张也能正常显示对比（落实 D5：sidecar 转码）；转码进行中显示 loading 占位（>300ms 用 skeleton/shimmer，非空白）；转码失败回退到 `HeicPlaceholder` 并提示。
+- [ ] 大图（数千万像素）对比缩放/平移顺滑、不内存爆（变换只用 transform/opacity；HEIC 转码产物按 `maxSide` 上限约束分辨率）。
+- [ ] Esc 关闭 overlay；overlay 打开时 grid 不可被误操作；关闭后焦点回到原触发瓦片（焦点管理）。
+- [ ] 可访问性：所有交互键盘可达、有可见 focus ring；图片有 `alt`（文件名）；状态/选择不靠纯色（图标+文字+色）；尊重 `prefers-reduced-motion`。
+- [ ] 三层 formatter 通过（Rust `cargo fmt`、Python `ruff`、前端 `prettier`）。

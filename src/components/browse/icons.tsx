@@ -63,3 +63,42 @@ export function ImageIcon({ className }: IconProps) {
     </>,
   );
 }
+
+export function ZoomInIcon({ className }: IconProps) {
+  return base(
+    className,
+    <>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.35-4.35M11 8v6M8 11h6" />
+    </>,
+  );
+}
+
+export function ZoomOutIcon({ className }: IconProps) {
+  return base(
+    className,
+    <>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.35-4.35M8 11h6" />
+    </>,
+  );
+}
+
+export function Maximize2Icon({ className }: IconProps) {
+  return base(
+    className,
+    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />,
+  );
+}
+
+export function ArrowLeftRightIcon({ className }: IconProps) {
+  return base(className, <path d="m21 16-4 4-4-4M17 20V4M3 8l4-4 4 4M7 4v16" />);
+}
+
+export function ChevronLeftIcon({ className }: IconProps) {
+  return base(className, <path d="m15 18-6-6 6-6" />);
+}
+
+export function ChevronRightIcon({ className }: IconProps) {
+  return base(className, <path d="m9 18 6-6-6-6" />);
+}

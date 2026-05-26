@@ -4,9 +4,11 @@ import { analyzePending } from "./api/analysisApi";
 import { pickFolder } from "./api/dialogApi";
 import { groupPhotos } from "./api/groupsApi";
 import { scanFolder } from "./api/photosApi";
+import { ABCompareViewer } from "./components/compare";
 import { GroupBrowseView } from "./components/browse";
 import { useGroupsStore } from "./store/groupsStore";
 import { usePhotosStore } from "./store/photosStore";
+import { useCompareStore } from "./store/compareStore";
 import { describeAppError } from "./types/ipc";
 import type { PhotoId } from "./types/photo";
 
@@ -71,13 +73,16 @@ export function App() {
     }
   }
 
-  // Mount point for the A/B compare viewer — landed by the ab-compare task.
-  function onCompare(_id: PhotoId) {
-    setNotice("A/B 对比将在后续任务（ab-compare）实现");
+  const openFor = useCompareStore((s) => s.openFor);
+
+  function onCompare(id: PhotoId) {
+    openFor(id);
   }
 
   return (
     <div className="flex h-full flex-col">
+      {/* A/B compare overlay — rendered at App level so it covers the full viewport. */}
+      <ABCompareViewer />
       <header className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
         <h1 className="text-base font-semibold">Photo Picker</h1>
         <button type="button" onClick={onImport} disabled={busy} className={BTN}>
