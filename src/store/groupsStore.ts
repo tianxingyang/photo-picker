@@ -37,10 +37,12 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
 
   // Optimistic: write the store first so the status pill flips instantly
   // (state-management.md). Persistence is single-flight per id: a burst of
-  // clicks coalesces to the latest intent, writes land in click order, and on
-  // failure we revert only the status field to the last *persisted* value —
-  // guarded so a stale rollback neither clobbers a newer click nor resurrects a
-  // row a concurrent load() removed.
+  // clicks coalesces to the latest intent, writes land in click order. Both the
+  // success and failure paths re-assert only the status field — success to the
+  // persisted target (so a concurrent load() that overwrote the optimistic write
+  // can't leave the UI stale), failure to the last *persisted* value — each
+  // guarded so it neither clobbers a newer click nor resurrects a row a
+  // concurrent load() removed.
   setStatus: async (id, status) => {
     const cur = get().byId[id];
     if (!cur) return;
@@ -56,7 +58,19 @@ export const useGroupsStore = create<GroupsState>((set, get) => ({
         await setPhotoStatus(id, target);
         baseline = target; // target is now persisted
         const latest = desiredStatus.get(id);
-        if (latest == null || latest === target) break;
+        if (latest == null || latest === target) {
+          // A concurrent load() may have replaced byId with pre-write DB data
+          // while this write was in flight, leaving the UI stale on the success
+          // path. Re-assert the persisted value (sync from await to break, so
+          // `target` is still the latest intent). Guarded: never resurrect a
+          // load()-removed row, and skip a no-op write.
+          set((s) => {
+            const c = s.byId[id];
+            if (!c || c.status === target) return s;
+            return { byId: { ...s.byId, [id]: { ...c, status: target } } };
+          });
+          break;
+        }
         target = latest; // a newer click landed mid-write — persist it too
       }
     } catch (e) {
