@@ -149,3 +149,38 @@ Planned + built the similar-group browse UI (main review surface). Backend: list
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: M1 ⑨ keep/reject/pending status persistence (set_status)
+
+**Date**: 2026-05-26
+**Task**: M1 ⑨ keep/reject/pending status persistence (set_status)
+**Branch**: `feat/m1-keep-reject-status`
+
+### Summary
+
+Planned+implemented the photo three-state status loop: frontend optimistic setStatus -> Rust set_status command (enum-check->Validation, spawn_blocking single-row UPDATE, 0 rows->NotFound) -> DB, no new migration (reused 0001 status enum+CHECK). Locked 4 decisions: single-photo only (no batch - no multi-select UI in M1), AppError::Validation variant (paired error.rs<->ipc.ts), missing id->NotFound, silent optimistic rollback. trellis-check passed 7/7 AC + 36 Rust tests; GUI smoke (persist across restart, no group-linkage) user-confirmed. A parallel session (e7578aa) fixed a stale-rollback race with per-id single-flight + persisted-baseline rollback; captured that pattern + the AppError::Validation contract + tsc -b/vite-env.d.ts gotchas into specs.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3a19008` | (see git log) |
+| `e7578aa` | (see git log) |
+| `89d6e14` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
