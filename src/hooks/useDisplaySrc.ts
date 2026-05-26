@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { transcodeForDisplay } from "../api/displayApi";
 import type { BrowsePhoto, PhotoId, PhotoSrc } from "../types/photo";
@@ -26,10 +26,6 @@ const transcodeCache = new Map<PhotoId, PhotoSrc>();
  * or error fallback without branching on undefined/null.
  */
 export function useDisplaySrc(photo: BrowsePhoto): DisplaySrcState {
-  // Non-HEIC photos are always ready — return a stable object using a ref so
-  // callers wrapped in React.memo don't re-render on every call.
-  const stableReady = useRef<DisplaySrcState>({ state: "ready", src: photo.src });
-
   const [heicState, setHeicState] = useState<DisplaySrcState>(() => {
     if (!photo.isHeic) return { state: "ready", src: photo.src };
     const cached = transcodeCache.get(photo.id);
@@ -39,12 +35,18 @@ export function useDisplaySrc(photo: BrowsePhoto): DisplaySrcState {
   useEffect(() => {
     if (!photo.isHeic) return;
 
-    // Cache hit — nothing to do; initial state was already set from the cache.
+    // Cache hit — show it immediately.
     const cached = transcodeCache.get(photo.id);
     if (cached !== undefined) {
       setHeicState({ state: "ready", src: cached });
       return;
     }
+
+    // why: reset to loading for THIS id. The same hook instance is reused across
+    // photo changes (the pane is not remounted), so without this reset heicState
+    // would keep the previous photo's resolved src until the new transcode lands
+    // — a stale image flash when navigating the filmstrip.
+    setHeicState({ state: "loading" });
 
     let cancelled = false;
     transcodeForDisplay(photo.id)
@@ -68,6 +70,8 @@ export function useDisplaySrc(photo: BrowsePhoto): DisplaySrcState {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [photo.id, photo.isHeic]);
 
-  if (!photo.isHeic) return stableReady.current;
+  // Non-HEIC: compute fresh each render so switching between non-HEIC photos
+  // (filmstrip navigation) reflects the current photo's src, not a stale one.
+  if (!photo.isHeic) return { state: "ready", src: photo.src };
   return heicState;
 }

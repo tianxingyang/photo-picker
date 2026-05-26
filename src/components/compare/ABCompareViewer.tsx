@@ -154,13 +154,19 @@ export function ABCompareViewer() {
   }
 
   function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
-    if (!dragRef.current) return;
-    const dx = e.clientX - dragRef.current.startX;
-    const dy = e.clientY - dragRef.current.startY;
+    // why: snapshot the drag base into a local BEFORE setView. The updater
+    // closure runs later (React 18 batches updates via the scheduler); by then
+    // a pointerup may have set dragRef.current = null. Dereferencing the ref
+    // inside the closure (dragRef.current!.startTx) then throws "null.startTx"
+    // during the render phase, which unmounts the whole tree → blank screen.
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
     setView((prev) => ({
       ...prev,
-      tx: dragRef.current!.startTx + dx,
-      ty: dragRef.current!.startTy + dy,
+      tx: drag.startTx + dx,
+      ty: drag.startTy + dy,
     }));
   }
 
