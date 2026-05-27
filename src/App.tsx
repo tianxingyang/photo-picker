@@ -6,6 +6,7 @@ import { groupPhotos } from "./api/groupsApi";
 import { scanFolder } from "./api/photosApi";
 import { ABCompareViewer } from "./components/compare";
 import { GroupBrowseView } from "./components/browse";
+import { clearDisplayCache } from "./hooks/useDisplaySrc";
 import { useGroupsStore } from "./store/groupsStore";
 import { usePhotosStore } from "./store/photosStore";
 import { useCompareStore } from "./store/compareStore";
@@ -42,6 +43,10 @@ export function App() {
       const folder = await pickFolder();
       if (folder === null) return;
       const { photos, skipped } = await scanFolder(folder);
+      // why: a re-scan may have replaced files at paths whose (path-derived)
+      // PhotoId is unchanged; drop cached transcode URLs so HEIC display
+      // re-resolves through the backend, which re-reads the live file mtime.
+      clearDisplayCache();
       addPhotos(photos);
       // why: hydrate the browse grid right after import so freshly-imported
       // (not-yet-analysed) photos show in the "未分组" bucket immediately —

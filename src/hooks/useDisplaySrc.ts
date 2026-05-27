@@ -9,10 +9,25 @@ type DisplaySrcState =
   | { state: "error"; message: string };
 
 // Module-level cache: once a HEIC has been transcoded and its asset URL
-// returned, we reuse the URL for the session lifetime. This avoids redundant
-// invoke round-trips when the same photo is mounted in multiple panes or the
-// filmstrip.
+// returned, we reuse the URL within the current dataset to avoid redundant
+// invoke round-trips when a photo is revisited (e.g. filmstrip navigation).
+// Invalidated by clearDisplayCache() on a folder (re-)scan — see there.
 const transcodeCache = new Map<PhotoId, PhotoSrc>();
+
+/**
+ * Drop every cached transcode URL. Call this after a folder (re-)scan.
+ *
+ * why: PhotoId is path-derived (stable across rescans of the same path), but the
+ * backend keys transcode output by path+mtime and re-reads the LIVE file mtime
+ * on every call — so a file replaced/edited at a known path yields a fresh result
+ * server-side. Without this clear, the id-keyed cache would pin the old asset URL
+ * for the rest of the session and bypass that backend invalidation. Clearing on
+ * (re-)scan keeps the two layers consistent: frontend cache = per-dataset,
+ * backend cache = per-file-version.
+ */
+export function clearDisplayCache(): void {
+  transcodeCache.clear();
+}
 
 /**
  * Resolve a displayable `PhotoSrc` for any photo type.
