@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { transcodeForDisplay } from "../api/displayApi";
 import type { BrowsePhoto, PhotoId, PhotoSrc } from "../types/photo";
@@ -32,6 +32,22 @@ export function useDisplaySrc(photo: BrowsePhoto): DisplaySrcState {
     return cached !== undefined ? { state: "ready", src: cached } : { state: "loading" };
   });
 
+  // why: this hook instance is reused when the pane's photo changes (the pane is
+  // NOT remounted), and useState's initializer runs only on first mount. Without
+  // a render-phase reset, the first render after photo.id changes would return
+  // the PREVIOUS photo's resolved heicState — painting the old image under the
+  // new id for one frame (the effect below resets state only AFTER paint).
+  // Setting state during render, guarded by the id ref, makes React discard that
+  // stale render before commit, so the wrong image never reaches the screen.
+  const prevIdRef = useRef(photo.id);
+  if (prevIdRef.current !== photo.id) {
+    prevIdRef.current = photo.id;
+    if (photo.isHeic) {
+      const cached = transcodeCache.get(photo.id);
+      setHeicState(cached !== undefined ? { state: "ready", src: cached } : { state: "loading" });
+    }
+  }
+
   useEffect(() => {
     if (!photo.isHeic) return;
 
@@ -42,12 +58,8 @@ export function useDisplaySrc(photo: BrowsePhoto): DisplaySrcState {
       return;
     }
 
-    // why: reset to loading for THIS id. The same hook instance is reused across
-    // photo changes (the pane is not remounted), so without this reset heicState
-    // would keep the previous photo's resolved src until the new transcode lands
-    // — a stale image flash when navigating the filmstrip.
-    setHeicState({ state: "loading" });
-
+    // State was already reset during render by the photo-id guard above (to a
+    // cache hit or to "loading"), so here we only kick off the async transcode.
     let cancelled = false;
     transcodeForDisplay(photo.id)
       .then((src) => {
