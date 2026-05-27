@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
-- **Last Active**: 2026-05-26
+- **Total Sessions**: 6
+- **Last Active**: 2026-05-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~186 | Active |
+| `journal-1.md` | ~219 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-05-27 | A/B compare 代码审查 + 修复 HEIC 切图 stale 帧 | `77b59bc` | `feat/ab-compare` |
 | 5 | 2026-05-26 | M1 ⑨ keep/reject/pending status persistence (set_status) | `3a19008`, `e7578aa`, `89d6e14` | `feat/m1-keep-reject-status` |
 | 4 | 2026-05-26 | M1 group-browse UI + sidecar UTF-8 fix | `be010f9`, `f346945`, `875e0db` | `feat/m1-group-browse-ui` |
 | 3 | 2026-05-26 | M1 近重复分组 (pHash 连通分量) | `4bf7bcc` | `main` |

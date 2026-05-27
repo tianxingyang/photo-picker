@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Prettier + forbidden/required frontend patterns to verify before commit (three-layer formatter AC)."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust/Python quality gates: cargo fmt/clippy, ruff check/format, test expectations."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify a11y compliance (keyboard-reachable, 1/2 mirrored as buttons, color-not-only, alt), photo-URL rule (no raw path in <img src>), styling via semantic tokens."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Verify per-id selectors (no whole-store reads in filmstrip items), compareStore partitioning, and correct reuse of optimistic single-flight setStatus."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify transcode_for_display error mapping (NotFound vs Sidecar) and that DB lock is never held across .await."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify the Python↔Rust↔TS transcode contract stays consistent (payload keys, return shape, PhotoSrc conversion)."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Check no duplicate keep-status logic was written (must reuse groupsStore.setStatus), no re-implemented placeholder, no new asset-protocol config."}

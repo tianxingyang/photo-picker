@@ -64,6 +64,7 @@ pub fn run() {
             commands::echo_via_sidecar,
             commands::photos::scan_folder,
             commands::photos::set_status,
+            commands::photos::transcode_for_display,
             commands::analysis::analyze_pending,
             commands::grouping::group_photos,
             commands::grouping::list_groups

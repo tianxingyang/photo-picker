@@ -184,3 +184,36 @@ Planned+implemented the photo three-state status loop: frontend optimistic setSt
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: A/B compare 代码审查 + 修复 HEIC 切图 stale 帧
+
+**Date**: 2026-05-27
+**Task**: A/B compare 代码审查 + 修复 HEIC 切图 stale 帧
+**Branch**: `feat/ab-compare`
+
+### Summary
+
+对 feat/ab-compare 分支做 max 级代码审查（5 角度 finder + 交叉验证 + sweep）。确认契约层全通过（命令名/参数大小写 photoId->photo_id/payload 键/返回 shape/assetProtocol scope=["**"]/CSP 含 asset:），排除两个误报（overlay z-50 trap focus 期间 load() 不可达，故 memberIds 不会 stale；sidecar 串行处理故 .part 无并发覆盖）。修复 1 号发现：useDisplaySrc hook 实例切图复用 + useState 初始化器仅首挂载运行 + loading 重置在 paint 后 effect -> HEIC<->HEIC 导航/Swap 首帧把旧图画到新 id。改为渲染期重置（prevIdRef 守卫 + plain-value setHeicState，不触碰 ef0f1aa ref-in-updater 陷阱），React commit 前丢弃 stale 渲染。tsc -b 通过，trellis-check PASS。未处理的低/中危发现待后续：#3 滚轮缩放泄漏给 webview（React onWheel passive 无法 preventDefault，需 ref 挂 non-passive 监听）、#4 transcode.py 裸文件名 dest 时 os.makedirs('') 崩（当前 Rust 调用方传绝对路径故不可达）、#5 工具栏 aPhoto 用非响应式 getState 快照、#6 mtime 缓存键在 FAT/exFAT 2s 粒度上可能失效。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `77b59bc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
