@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { analyzePending } from "./api/analysisApi";
 import { pickFolder } from "./api/dialogApi";
 import { groupPhotos } from "./api/groupsApi";
-import { scanFolder } from "./api/photosApi";
+import { exportKeep, scanFolder } from "./api/photosApi";
 import { ABCompareViewer } from "./components/compare";
 import { GroupBrowseView } from "./components/browse";
 import { clearDisplayCache } from "./hooks/useDisplaySrc";
@@ -78,6 +78,31 @@ export function App() {
     }
   }
 
+  async function onExport() {
+    if (busy) return;
+    setError(null);
+    setNotice(null);
+    setBusy(true);
+    try {
+      const destDir = await pickFolder();
+      if (destDir === null) return; // 用户取消选择目录
+      const { exported, renamed, failed } = await exportKeep(destDir);
+      if (exported === 0 && failed.length === 0) {
+        setNotice("没有标记为「保留」的照片，未导出任何文件");
+      } else {
+        const parts = [`已导出 ${exported} 张`];
+        if (renamed > 0) parts.push(`${renamed} 张因重名改名`);
+        if (failed.length > 0) parts.push(`${failed.length} 项失败`);
+        setNotice(parts.join("，"));
+      }
+    } catch (e) {
+      const { message } = describeAppError(e);
+      setError(`导出失败：${message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const openFor = useCompareStore((s) => s.openFor);
 
   function onCompare(id: PhotoId) {
@@ -95,6 +120,9 @@ export function App() {
         </button>
         <button type="button" onClick={onAnalyzeAndGroup} disabled={busy} className={BTN}>
           {busy ? "处理中…" : "分析并分组"}
+        </button>
+        <button type="button" onClick={onExport} disabled={busy} className={BTN}>
+          导出精选
         </button>
         <span className="text-xs text-muted-foreground">已导入 {importedCount} 张</span>
       </header>

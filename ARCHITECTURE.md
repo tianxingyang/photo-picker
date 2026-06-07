@@ -99,6 +99,25 @@
                            └─> 成功保留乐观态 / 失败回滚 prev 并 rethrow（前端 .catch 静默吞）
 ```
 
+## 数据流：导出精选
+
+```
+用户点击"导出精选"
+  └─> Frontend: pickFolder() 选目标目录（取消→null→静默返回）
+       └─> invoke('export_keep', { destDir })
+            └─> Rust export_keep:
+                 ① dest.is_dir() 校验（否→Validation）
+                 ② spawn_blocking #1（持 DB 锁）：SELECT path FROM photos WHERE status='keep'
+                 ③ spawn_blocking #2（不持 DB 锁）：逐张 resolve_target 探空位 → std::fs::copy
+                      · 目标重名→ name (n).ext（renamed++）
+                      · 成功→exported++；单项失败/源无文件名/名额耗尽→failed.push（不中断）
+                 └─> 返回 ExportSummary { exported, renamed, failed }
+            └─> Frontend 据 exported/renamed/failed 拼 notice（0 张→明确提示）
+```
+
+源原片全程只读：`std::fs::copy` 只读源、写新目标，绝不 rename/remove/写回源路径；`resolve_target`
+只在探到「目标不存在」时才写，故不覆盖目标已有同名文件。
+
 ## IPC 协议（Rust ↔ Python）
 
 JSON-Lines over stdio，每行一个 JSON 对象。
@@ -135,7 +154,7 @@ JSON-Lines over stdio，每行一个 JSON 对象。
 
 - 数据库：`<app_data_dir>/photo-picker.db`（WAL 模式）。
 - 缩略图缓存：`<app_data_dir>/thumbnails/<id[0:2]>/<id>.webp`，两级目录避免单目录文件爆炸。
-- 用户原片：**绝不复制、绝不修改**，全程只读路径引用。
+- 用户原片：应用内部**绝不复制、绝不移动、绝不修改**（缩略图/分析都不把原片复制入库），全程只读路径引用。唯一例外是用户主动发起的「导出精选」——把 `status='keep'` 的原片**只读拷贝**到用户自选目录，源文件零改动（见上「数据流：导出精选」）。
 
 ## 关键设计决策（待用户确认）
 

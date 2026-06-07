@@ -63,3 +63,33 @@ export async function scanFolder(path: string): Promise<ScanResult> {
 export async function setPhotoStatus(id: PhotoId, status: PhotoStatus): Promise<void> {
   await invoke("set_status", { photoId: id, status });
 }
+
+export type ExportFailure = { source: string; reason: string };
+export type ExportSummary = { exported: number; renamed: number; failed: ExportFailure[] };
+
+function isExportFailure(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.source === "string" && typeof o.reason === "string";
+}
+
+// Tauri v2: JS camelCase `destDir` ↔ Rust snake_case `dest_dir`. Validated at the
+// boundary like scanFolder — including each `failed[]` element — because Rust↔TS
+// type sharing is still OPEN (no codegen yet).
+export async function exportKeep(destDir: string): Promise<ExportSummary> {
+  const raw = await invoke<unknown>("export_keep", { destDir });
+  if (!raw || typeof raw !== "object") {
+    throw new Error("export_keep returned an unexpected shape");
+  }
+  const o = raw as { exported?: unknown; renamed?: unknown; failed?: unknown };
+  if (
+    typeof o.exported !== "number" ||
+    typeof o.renamed !== "number" ||
+    !Array.isArray(o.failed) ||
+    !o.failed.every(isExportFailure)
+  ) {
+    throw new Error("export_keep returned an unexpected shape");
+  }
+  // validated narrowing above
+  return { exported: o.exported, renamed: o.renamed, failed: o.failed as ExportFailure[] };
+}
