@@ -109,10 +109,12 @@
                  ① dest.is_dir() 校验（否→Validation）
                  ② spawn_blocking #1（持 DB 锁）：SELECT path FROM photos WHERE status='keep'
                  ③ spawn_blocking #2（不持 DB 锁）：逐张 resolve_target 探空位 → std::fs::copy
+                      · 源已在目标目录内（规范化源文件父目录==目标）→skipped++（不复制，避免自我克隆）
                       · 目标重名→ name (n).ext（renamed++）
-                      · 成功→exported++；单项失败/源无文件名/名额耗尽→failed.push（不中断）
-                 └─> 返回 ExportSummary { exported, renamed, failed }
-            └─> Frontend 据 exported/renamed/failed 拼 notice（0 张→明确提示）
+                      · 成功→exported++；单项失败/源无文件名/源已删除/名额耗尽→failed.push（不中断）
+                 └─> 返回 ExportSummary { exported, renamed, skipped, failed:[{source,reason}] }
+            └─> Frontend 据 exported/renamed/skipped/failed 拼 notice（0 张→明确提示）；
+                failed 明细在可折叠 <details> 列表逐项展示（文件名 — 原因）
 ```
 
 源原片全程只读：`std::fs::copy` 只读源、写新目标，绝不 rename/remove/写回源路径；`resolve_target`

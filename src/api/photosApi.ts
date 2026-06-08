@@ -24,7 +24,7 @@ function isPhotoRow(v: unknown): boolean {
   );
 }
 
-function basename(path: string): string {
+export function basename(path: string): string {
   // why: stored paths are OS-native; split on both separators for the leaf.
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
@@ -65,7 +65,12 @@ export async function setPhotoStatus(id: PhotoId, status: PhotoStatus): Promise<
 }
 
 export type ExportFailure = { source: string; reason: string };
-export type ExportSummary = { exported: number; renamed: number; failed: ExportFailure[] };
+export type ExportSummary = {
+  exported: number;
+  renamed: number;
+  skipped: number;
+  failed: ExportFailure[];
+};
 
 function isExportFailure(v: unknown): boolean {
   if (!v || typeof v !== "object") return false;
@@ -81,15 +86,21 @@ export async function exportKeep(destDir: string): Promise<ExportSummary> {
   if (!raw || typeof raw !== "object") {
     throw new Error("export_keep returned an unexpected shape");
   }
-  const o = raw as { exported?: unknown; renamed?: unknown; failed?: unknown };
+  const o = raw as { exported?: unknown; renamed?: unknown; skipped?: unknown; failed?: unknown };
   if (
     typeof o.exported !== "number" ||
     typeof o.renamed !== "number" ||
+    typeof o.skipped !== "number" ||
     !Array.isArray(o.failed) ||
     !o.failed.every(isExportFailure)
   ) {
     throw new Error("export_keep returned an unexpected shape");
   }
   // validated narrowing above
-  return { exported: o.exported, renamed: o.renamed, failed: o.failed as ExportFailure[] };
+  return {
+    exported: o.exported,
+    renamed: o.renamed,
+    skipped: o.skipped,
+    failed: o.failed as ExportFailure[],
+  };
 }

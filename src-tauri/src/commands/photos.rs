@@ -67,12 +67,14 @@ pub async fn set_status(
 }
 
 /// Result of an export: how many keeps landed, how many were renamed on a name
-/// collision, and per-item failures (which never abort the whole export).
+/// collision, how many were skipped because the source already lives in the
+/// destination folder, and per-item failures (which never abort the whole export).
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportSummary {
     pub exported: usize,
     pub renamed: usize,
+    pub skipped: usize,
     pub failed: Vec<ExportFailure>,
 }
 
@@ -84,10 +86,12 @@ pub struct ExportFailure {
 }
 
 /// Copy every `status='keep'` original into `dest_dir`, preserving the original
-/// file name; on a name collision write `name (n).ext` instead. Sources are
-/// strictly read-only — never moved, never modified. A per-item copy failure is
-/// recorded in `summary.failed` and does not abort the export; an export with no
-/// keeps returns `exported = 0` (not an error).
+/// file name; on a name collision write `name (n).ext` instead. A keep that
+/// already lives directly in `dest_dir` is skipped (counted in `summary.skipped`)
+/// rather than cloned next to itself. Sources are strictly read-only — never
+/// moved, never modified. A per-item copy failure is recorded in `summary.failed`
+/// and does not abort the export; an export with no keeps returns `exported = 0`
+/// (not an error).
 #[tauri::command]
 pub async fn export_keep(
     dest_dir: String,
@@ -211,14 +215,22 @@ fn select_keep_paths(conn: &Connection) -> rusqlite::Result<Vec<String>> {
 
 /// Pure file helper — copy each source into `dest`, renaming on collision.
 /// Sources are read-only (`std::fs::copy` reads the source, writes a new target;
-/// never rename/remove). Never silently drops a keep: a source with no file name,
-/// or an exhausted rename space, is recorded in `failed`.
+/// never rename/remove). A source already living directly in `dest` is skipped
+/// (counted in `skipped`) so we never clone a keep next to itself. Never silently
+/// drops a keep: a source with no file name, or an exhausted rename space, is
+/// recorded in `failed`.
 fn copy_keeps(paths: &[String], dest: &Path) -> ExportSummary {
     let mut summary = ExportSummary {
         exported: 0,
         renamed: 0,
+        skipped: 0,
         failed: Vec::new(),
     };
+    // why: canonicalize dest once so the "source already in dest" check below
+    // compares fully-resolved paths (handles `..`, symlinks, and Windows
+    // `\\?\` / case differences). dest was validated as a directory by the
+    // caller, so this normally succeeds; on failure the check is simply skipped.
+    let dest_canon = std::fs::canonicalize(dest).ok();
     for src in paths {
         let src_path = Path::new(src);
         let file_name = match src_path.file_name() {
@@ -231,6 +243,20 @@ fn copy_keeps(paths: &[String], dest: &Path) -> ExportSummary {
                 continue;
             }
         };
+        // why: a keep whose folder IS the export target is already at the
+        // destination; copying it would write `name (1).ext` beside the original
+        // and grow the source library on every re-run. Skip it (a no-op), don't
+        // clone it onto itself. Canonicalize the source FILE (not just its
+        // parent): a deleted/moved keep then fails canonicalize, falls through to
+        // the copy below, and is recorded in `failed` — never disguised as a skip.
+        if let Some(dest_canon) = &dest_canon {
+            if let Ok(src_canon) = std::fs::canonicalize(src_path) {
+                if src_canon.parent() == Some(dest_canon.as_path()) {
+                    summary.skipped += 1;
+                    continue;
+                }
+            }
+        }
         let (target, renamed) = match resolve_target(dest, file_name) {
             Some(t) => t,
             None => {
@@ -552,5 +578,55 @@ mod tests {
         assert_eq!(std::fs::read(&a).unwrap(), bytes);
         // target is a byte-for-byte copy.
         assert_eq!(std::fs::read(dest.path().join("photo.jpg")).unwrap(), bytes);
+    }
+
+    #[test]
+    fn copy_keeps_source_already_in_dest_is_skipped_not_duplicated() {
+        let dest = tempfile::tempdir().unwrap();
+        // the keep's source IS a file sitting directly in the export target.
+        let inside = dest.path().join("a.jpg");
+        std::fs::write(&inside, b"x").unwrap();
+        let summary = copy_keeps(&[inside.to_string_lossy().into_owned()], dest.path());
+        assert_eq!(summary.exported, 0, "a source already at dest must not be re-copied");
+        assert_eq!(summary.skipped, 1);
+        assert_eq!(summary.renamed, 0);
+        assert!(summary.failed.is_empty());
+        // the pre-fix behavior cloned it next to itself as "a (1).jpg".
+        assert!(
+            !dest.path().join("a (1).jpg").exists(),
+            "must not duplicate a keep into its own folder"
+        );
+        // original stays byte-identical.
+        assert_eq!(std::fs::read(&inside).unwrap(), b"x".to_vec());
+    }
+
+    #[test]
+    fn copy_keeps_source_in_subdir_of_dest_is_copied_not_skipped() {
+        let dest = tempfile::tempdir().unwrap();
+        // a source in a SUBfolder of dest is a genuine export, not a self-copy.
+        let sub = dest.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let s = sub.join("a.jpg");
+        std::fs::write(&s, b"x").unwrap();
+        let summary = copy_keeps(&[s.to_string_lossy().into_owned()], dest.path());
+        assert_eq!(summary.exported, 1);
+        assert_eq!(summary.skipped, 0);
+        assert_eq!(std::fs::read(dest.path().join("a.jpg")).unwrap(), b"x".to_vec());
+    }
+
+    #[test]
+    fn copy_keeps_missing_source_in_dest_is_failed_not_skipped() {
+        let dest = tempfile::tempdir().unwrap();
+        // a stale keep whose recorded path is inside dest, but the file is gone:
+        // the skip must NOT swallow it — a missing keep is a failure, not a no-op.
+        let missing = dest.path().join("gone.jpg"); // never created on disk
+        let summary = copy_keeps(&[missing.to_string_lossy().into_owned()], dest.path());
+        assert_eq!(summary.skipped, 0, "a deleted keep must not be disguised as a skip");
+        assert_eq!(summary.exported, 0);
+        assert_eq!(
+            summary.failed.len(),
+            1,
+            "a missing keep whose folder is the target must still surface as a failure"
+        );
     }
 }
