@@ -587,7 +587,10 @@ mod tests {
         let inside = dest.path().join("a.jpg");
         std::fs::write(&inside, b"x").unwrap();
         let summary = copy_keeps(&[inside.to_string_lossy().into_owned()], dest.path());
-        assert_eq!(summary.exported, 0, "a source already at dest must not be re-copied");
+        assert_eq!(
+            summary.exported, 0,
+            "a source already at dest must not be re-copied"
+        );
         assert_eq!(summary.skipped, 1);
         assert_eq!(summary.renamed, 0);
         assert!(summary.failed.is_empty());
@@ -611,7 +614,10 @@ mod tests {
         let summary = copy_keeps(&[s.to_string_lossy().into_owned()], dest.path());
         assert_eq!(summary.exported, 1);
         assert_eq!(summary.skipped, 0);
-        assert_eq!(std::fs::read(dest.path().join("a.jpg")).unwrap(), b"x".to_vec());
+        assert_eq!(
+            std::fs::read(dest.path().join("a.jpg")).unwrap(),
+            b"x".to_vec()
+        );
     }
 
     #[test]
@@ -621,7 +627,10 @@ mod tests {
         // the skip must NOT swallow it — a missing keep is a failure, not a no-op.
         let missing = dest.path().join("gone.jpg"); // never created on disk
         let summary = copy_keeps(&[missing.to_string_lossy().into_owned()], dest.path());
-        assert_eq!(summary.skipped, 0, "a deleted keep must not be disguised as a skip");
+        assert_eq!(
+            summary.skipped, 0,
+            "a deleted keep must not be disguised as a skip"
+        );
         assert_eq!(summary.exported, 0);
         assert_eq!(
             summary.failed.len(),

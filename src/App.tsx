@@ -136,7 +136,10 @@ export function App() {
         <span className="text-xs text-muted-foreground">已导入 {importedCount} 张</span>
       </header>
       {error !== null && (
-        <div role="alert" className="border-b border-border px-4 py-2 text-sm text-muted-foreground">
+        <div
+          role="alert"
+          className="border-b border-border px-4 py-2 text-sm text-muted-foreground"
+        >
           {error}
         </div>
       )}
