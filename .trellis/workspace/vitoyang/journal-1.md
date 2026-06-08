@@ -217,3 +217,37 @@ Planned+implemented the photo three-state status loop: frontend optimistic setSt
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: 导出精选 PR#8 审查修复（失败明细 + 源在目标内跳过）
+
+**Date**: 2026-06-08
+**Task**: 导出精选 PR#8 审查修复（失败明细 + 源在目标内跳过）
+**Branch**: `feat/m1-export-selection`
+
+### Summary
+
+对 PR #8 (export_keep) 做 max-effort 多 agent 审查，修复两项发现：(1) 前端不再丢弃 failed[].{source,reason}，新增可折叠 <details> 明细 + aria-live 失败计数；(2) ExportSummary 新增 skipped，copy_keeps 规范化源文件，父目录==目标时跳过，避免把 keep 克隆回源库。对抗复核抓到并修掉自引入回归：跳过判断改为规范化源文件本身，已删除的 keep 仍落入 failed。新增 3 个 Rust 测试（55/55 通过），tsc 通过，trellis-check 通过（自修 fmt/prettier）。ARCHITECTURE.md 契约同步。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b84feba` | (see git log) |
+| `3cff828` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
