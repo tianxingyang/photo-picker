@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify: command returns Result<_,AppError>, DB in spawn_blocking with no lock across .await, no unwrap/println, export_keep registered + documented in ARCHITECTURE.md, Rust tests present."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify per-item copy failures land in summary.failed (not abort), bad dest dir → Validation, and NO unnecessary new AppError variant was added."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify @tauri-apps/api only in api/, exportKeep validates the invoke result shape, onExport handles cancel(null)/zero-keep/error paths, no console.log, describeAppError used."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify Rust ExportSummary serde camelCase matches TS ExportSummary fields (exported/renamed/failed{source,reason}) and destDir↔dest_dir."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Verify reuse of pickFolder()/dialog plugin, the spawn_blocking+blocking_lock pattern, and notice/error UI — no duplicated dialog or IPC plumbing."}
