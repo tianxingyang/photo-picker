@@ -251,3 +251,36 @@ Planned+implemented the photo three-state status loop: frontend optimistic setSt
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Milestone 1 MVP 最终集成验收与父任务收尾
+
+**Date**: 2026-06-13
+**Task**: Milestone 1 MVP 最终集成验收与父任务收尾
+**Branch**: `chore/m1-mvp-integration-wrapup`
+
+### Summary
+
+M1 parent 集成验收：自动化全绿（Rust 61 tests / Python 25 tests / tsc+vite build / clippy -D warnings / ruff；DB 只读核查迁移 v3、328 张导入、126 张分析列齐全、20 个 phash_burst 组、status 持久化），用户 GUI 实测端到端链路（含 HEIC 混合导入、A/B 键盘 1/2、重启状态保持、导出 keep-only）通过。回填 parent PRD 验收清单、ROADMAP M1 标记交付并回填决策池，归档 05-24-milestone-1-mvp，M1 收官。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d3e9a64` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

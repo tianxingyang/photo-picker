@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-06-08
+- **Total Sessions**: 8
+- **Last Active**: 2026-06-13
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~253 | Active |
+| `journal-1.md` | ~286 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-06-13 | Milestone 1 MVP 最终集成验收与父任务收尾 | `d3e9a64` | `chore/m1-mvp-integration-wrapup` |
 | 7 | 2026-06-08 | 导出精选 PR#8 审查修复（失败明细 + 源在目标内跳过） | `b84feba`, `3cff828` | `feat/m1-export-selection` |
 | 6 | 2026-05-27 | A/B compare 代码审查 + 修复 HEIC 切图 stale 帧 | `77b59bc` | `feat/ab-compare` |
 | 5 | 2026-05-26 | M1 ⑨ keep/reject/pending status persistence (set_status) | `3a19008`, `e7578aa`, `89d6e14` | `feat/m1-keep-reject-status` |
