@@ -228,8 +228,11 @@ fn copy_keeps(paths: &[String], dest: &Path) -> ExportSummary {
     };
     // why: canonicalize dest once so the "source already in dest" check below
     // compares fully-resolved paths (handles `..`, symlinks, and Windows
-    // `\\?\` / case differences). dest was validated as a directory by the
-    // caller, so this normally succeeds; on failure the check is simply skipped.
+    // `\\?\` / case differences). On filesystems where canonicalize fails even
+    // though `is_dir()` passed (WebDAV / some NAS mounts), the check falls back
+    // to a lexical comparison inside `source_already_in_dest` instead of being
+    // disabled — otherwise every keep already in dest would be re-cloned as
+    // `name (n).ext` on each run.
     let dest_canon = std::fs::canonicalize(dest).ok();
     for src in paths {
         let src_path = Path::new(src);
@@ -246,16 +249,11 @@ fn copy_keeps(paths: &[String], dest: &Path) -> ExportSummary {
         // why: a keep whose folder IS the export target is already at the
         // destination; copying it would write `name (1).ext` beside the original
         // and grow the source library on every re-run. Skip it (a no-op), don't
-        // clone it onto itself. Canonicalize the source FILE (not just its
-        // parent): a deleted/moved keep then fails canonicalize, falls through to
-        // the copy below, and is recorded in `failed` — never disguised as a skip.
-        if let Some(dest_canon) = &dest_canon {
-            if let Ok(src_canon) = std::fs::canonicalize(src_path) {
-                if src_canon.parent() == Some(dest_canon.as_path()) {
-                    summary.skipped += 1;
-                    continue;
-                }
-            }
+        // clone it onto itself. A deleted/moved keep falls through to the copy
+        // below and is recorded in `failed` — never disguised as a skip.
+        if source_already_in_dest(src_path, dest, dest_canon.as_deref()) {
+            summary.skipped += 1;
+            continue;
         }
         let (target, renamed) = match resolve_target(dest, file_name) {
             Some(t) => t,
@@ -277,13 +275,85 @@ fn copy_keeps(paths: &[String], dest: &Path) -> ExportSummary {
                     summary.renamed += 1;
                 }
             }
-            Err(e) => summary.failed.push(ExportFailure {
-                source: src.clone(),
-                reason: e.to_string(),
-            }),
+            Err(e) => {
+                // why: a mid-copy failure (disk full, source vanishing) can leave
+                // a truncated target under the canonical name; a later retry would
+                // then see it in resolve_target, divert the good bytes to
+                // `name (1).ext`, and the corrupt file would keep the original
+                // name forever, indistinguishable from a clean export.
+                // resolve_target only hands out paths that did not exist, so this
+                // can only delete what the failed copy itself created. Best-effort:
+                // a cleanup error must not mask the copy error being reported.
+                let _ = std::fs::remove_file(&target);
+                summary.failed.push(ExportFailure {
+                    source: src.clone(),
+                    reason: e.to_string(),
+                });
+            }
         }
     }
     summary
+}
+
+/// True when `src_path` provably lives directly in `dest`, so exporting it
+/// would clone it next to itself. Two tiers:
+///   1. canonical — fully-resolved comparison (`..`, symlinks, Windows `\\?\` /
+///      case) when the filesystem supports canonicalize on both sides;
+///   2. lexical fallback when canonicalize fails on either side (WebDAV / some
+///      NAS / virtual filesystems): normalize `.`/`..` components and compare.
+///      Gated on the source file existing, so a deleted keep still reaches the
+///      copy and lands in `failed`, never disguised as a skip.
+fn source_already_in_dest(src_path: &Path, dest: &Path, dest_canon: Option<&Path>) -> bool {
+    if let Some(dest_canon) = dest_canon {
+        if let Ok(src_canon) = std::fs::canonicalize(src_path) {
+            return src_canon.parent() == Some(dest_canon);
+        }
+    }
+    if !src_path.is_file() {
+        return false; // missing keep must surface as a copy failure, not a skip
+    }
+    match src_path.parent() {
+        Some(parent) => paths_lexically_equal(parent, dest),
+        None => false,
+    }
+}
+
+/// Lexical (no-IO) path equality for the canonicalize-unavailable fallback:
+/// drop `.`, resolve `..` against preceding normal components, then compare —
+/// case-insensitively for ASCII on Windows (drive letters, Latin names; full
+/// Unicode case folding is filesystem-specific and out of scope for a
+/// best-effort guard).
+fn paths_lexically_equal(a: &Path, b: &Path) -> bool {
+    let (a, b) = (lexical_normalize(a), lexical_normalize(b));
+    if a == b {
+        return true;
+    }
+    if cfg!(windows) {
+        return a
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&b.to_string_lossy());
+    }
+    false
+}
+
+fn lexical_normalize(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // only pop a normal component; `..` at or above the root stays.
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                } else {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// Find a non-colliding target path under `dest` for `file_name`:
@@ -618,6 +688,83 @@ mod tests {
             std::fs::read(dest.path().join("a.jpg")).unwrap(),
             b"x".to_vec()
         );
+    }
+
+    #[test]
+    fn copy_keeps_failed_copy_leaves_no_target_residue() {
+        let dest = tempfile::tempdir().unwrap();
+        let src = tempfile::tempdir().unwrap();
+        // a directory as source makes fs::copy fail; the contract pinned here is
+        // that a failed item leaves NOTHING behind in dest (a mid-copy failure
+        // like disk-full would otherwise leave a truncated file that a retry
+        // then shadows behind "name (1).ext").
+        let dir_source = src.path().join("not-a-file.jpg");
+        std::fs::create_dir(&dir_source).unwrap();
+        let summary = copy_keeps(&[dir_source.to_string_lossy().into_owned()], dest.path());
+        assert_eq!(summary.exported, 0);
+        assert_eq!(summary.failed.len(), 1);
+        assert_eq!(
+            std::fs::read_dir(dest.path()).unwrap().count(),
+            0,
+            "a failed copy must not leave a partial target behind"
+        );
+    }
+
+    // --- source_already_in_dest: lexical fallback when canonicalize fails ---
+    // (dest_canon = None simulates a filesystem — WebDAV / some NAS — where
+    // std::fs::canonicalize errors even though the directory exists.)
+
+    #[test]
+    fn fallback_source_in_dest_is_still_skipped_without_canonicalize() {
+        let dest = tempfile::tempdir().unwrap();
+        let inside = dest.path().join("a.jpg");
+        std::fs::write(&inside, b"x").unwrap();
+        assert!(
+            source_already_in_dest(&inside, dest.path(), None),
+            "canonicalize being unavailable must not disable the self-clone guard"
+        );
+    }
+
+    #[test]
+    fn fallback_missing_source_is_not_a_skip() {
+        let dest = tempfile::tempdir().unwrap();
+        let missing = dest.path().join("gone.jpg"); // never created
+        assert!(
+            !source_already_in_dest(&missing, dest.path(), None),
+            "a deleted keep must fall through to the copy and land in failed"
+        );
+    }
+
+    #[test]
+    fn fallback_subdir_source_is_not_a_skip() {
+        let dest = tempfile::tempdir().unwrap();
+        let sub = dest.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let s = sub.join("a.jpg");
+        std::fs::write(&s, b"x").unwrap();
+        assert!(!source_already_in_dest(&s, dest.path(), None));
+    }
+
+    #[test]
+    fn fallback_normalizes_dot_and_dotdot_components() {
+        let dest = tempfile::tempdir().unwrap();
+        let inside = dest.path().join("a.jpg");
+        std::fs::write(&inside, b"x").unwrap();
+        // same file spelled via `./sub/..` indirection. `sub` must exist: Unix
+        // resolves path components against the filesystem even for `..`.
+        std::fs::create_dir(dest.path().join("sub")).unwrap();
+        let spelled = dest.path().join(".").join("sub").join("..").join("a.jpg");
+        assert!(source_already_in_dest(&spelled, dest.path(), None));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fallback_is_ascii_case_insensitive_on_windows() {
+        let dest = tempfile::tempdir().unwrap();
+        let inside = dest.path().join("a.jpg");
+        std::fs::write(&inside, b"x").unwrap();
+        let upper = PathBuf::from(dest.path().to_string_lossy().to_uppercase()).join("a.jpg");
+        assert!(source_already_in_dest(&upper, dest.path(), None));
     }
 
     #[test]
