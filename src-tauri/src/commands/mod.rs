@@ -1,12 +1,27 @@
 pub mod analysis;
 pub mod grouping;
 pub mod photos;
+pub mod projects;
 
 use serde_json::json;
 use tauri::State;
 
 use crate::error::AppError;
 use crate::AppState;
+
+/// Read the currently-open project id from process state, cloning it out so the
+/// `std::sync::Mutex` is never held across an `.await` or into `spawn_blocking`.
+/// Returns `Validation("no project open")` when none is open — every
+/// photo-scoped command calls this at entry so "ran without an open project" is
+/// a loud failure, not silent global access.
+pub fn current_project(state: &AppState) -> Result<String, AppError> {
+    state
+        .current_project
+        .lock()
+        .expect("current_project mutex poisoned")
+        .clone()
+        .ok_or_else(|| AppError::Validation("no project open".into()))
+}
 
 #[tauri::command]
 pub async fn echo_via_sidecar(

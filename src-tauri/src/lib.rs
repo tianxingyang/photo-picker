@@ -22,6 +22,11 @@ pub struct AppState {
     // ref, then `blocking_lock()` the Connection inside spawn_blocking — keeping
     // rusqlite's blocking work off the tokio worker without holding it across .await.
     pub db: Arc<Mutex<Connection>>,
+    // why: the id (UUID) of the currently-open project. One project is open at a
+    // time; every photo-scoped command reads this to scope its queries. A
+    // std::sync::Mutex (not tokio) because the read is a trivial clone done
+    // synchronously before any await — see commands::current_project.
+    pub current_project: std::sync::Mutex<Option<String>>,
     // why: single-flight guard so two concurrent analyze_pending invocations
     // don't both pick up the same pending rows and double-process them.
     pub analysis_running: AtomicBool,
@@ -41,6 +46,7 @@ pub fn run() {
             app.manage(AppState {
                 sidecar: Mutex::new(None),
                 db: Arc::new(Mutex::new(conn)),
+                current_project: std::sync::Mutex::new(None),
                 analysis_running: AtomicBool::new(false),
                 grouping_running: AtomicBool::new(false),
             });
@@ -62,6 +68,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::echo_via_sidecar,
+            commands::projects::create_project,
+            commands::projects::list_projects,
+            commands::projects::open_project,
+            commands::projects::close_project,
+            commands::projects::delete_project,
             commands::photos::scan_folder,
             commands::photos::set_status,
             commands::photos::export_keep,

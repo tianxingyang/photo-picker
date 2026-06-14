@@ -31,10 +31,17 @@ pub struct ScanOutcome {
 }
 
 /// Recursively scan `root`, filter to supported image extensions, and
-/// incrementally upsert each into `photos`. Returns every matched photo with
-/// its current DB state (so a re-scan reports already-kept/rejected photos
-/// truthfully, not as fresh `pending`) plus the count of unreadable entries.
-pub fn scan_folder(conn: &Connection, root: &Path) -> Result<ScanOutcome, ScanErr> {
+/// incrementally upsert each into `photos` under `project_id`. Returns every
+/// matched photo with its current DB state (so a re-scan reports
+/// already-kept/rejected photos truthfully, not as fresh `pending`) plus the
+/// count of unreadable entries. The photo id is `blake3(project_id + '\n' +
+/// path)`, so the same path scanned into two projects yields two independent
+/// rows.
+pub fn scan_folder(
+    conn: &Connection,
+    project_id: &str,
+    root: &Path,
+) -> Result<ScanOutcome, ScanErr> {
     let mut matched: Vec<String> = Vec::new();
     let mut skipped: u32 = 0;
     for entry in WalkDir::new(root) {
@@ -57,14 +64,14 @@ pub fn scan_folder(conn: &Connection, root: &Path) -> Result<ScanOutcome, ScanEr
     let mut rows = Vec::with_capacity(matched.len());
     {
         let mut insert = tx.prepare_cached(
-            "INSERT OR IGNORE INTO photos (id, path, status, created_at) \
-             VALUES (?1, ?2, 'pending', ?3)",
+            "INSERT OR IGNORE INTO photos (id, project_id, path, status, created_at) \
+             VALUES (?1, ?2, ?3, 'pending', ?4)",
         )?;
         let mut select =
             tx.prepare_cached("SELECT status, created_at FROM photos WHERE id = ?1")?;
         for path in matched {
-            let id = blake3::hash(path.as_bytes()).to_hex().to_string();
-            insert.execute(params![id, path, now])?;
+            let id = photo_id(project_id, &path);
+            insert.execute(params![id, project_id, path, now])?;
             let (status, created_at) =
                 select.query_row(params![id], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.push(PhotoRow {
@@ -82,6 +89,15 @@ pub fn scan_folder(conn: &Connection, root: &Path) -> Result<ScanOutcome, ScanEr
     })
 }
 
+/// Project-scoped photo id: `blake3(project_id + '\n' + path)` → 64 hex chars.
+/// The `\n` separator keeps the two fields unambiguous; the same path under two
+/// different project ids hashes to two different ids (independent records).
+pub fn photo_id(project_id: &str, path: &str) -> String {
+    blake3::hash(format!("{project_id}\n{path}").as_bytes())
+        .to_hex()
+        .to_string()
+}
+
 fn is_supported(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -94,10 +110,25 @@ mod tests {
     use super::*;
     use std::fs;
 
+    const PROJ: &str = "test-project";
+
     fn mem_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         conn.execute_batch(include_str!("../../migrations/0001_initial.sql"))
             .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0002_analysis.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0003_grouping.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/0004_projects.sql"))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at) \
+             VALUES (?1, ?1, '2026-01-01T00:00:00Z')",
+            params![PROJ],
+        )
+        .unwrap();
         conn
     }
 
@@ -113,7 +144,7 @@ mod tests {
         fs::write(root.join("sub").join("d.jpeg"), b"x").unwrap();
 
         let conn = mem_conn();
-        let outcome = scan_folder(&conn, root).unwrap();
+        let outcome = scan_folder(&conn, PROJ, root).unwrap();
 
         assert_eq!(
             outcome.photos.len(),
@@ -130,8 +161,8 @@ mod tests {
         fs::write(dir.path().join("a.jpg"), b"x").unwrap();
         let conn = mem_conn();
 
-        let first = scan_folder(&conn, dir.path()).unwrap();
-        let second = scan_folder(&conn, dir.path()).unwrap();
+        let first = scan_folder(&conn, PROJ, dir.path()).unwrap();
+        let second = scan_folder(&conn, PROJ, dir.path()).unwrap();
 
         assert_eq!(first.photos.len(), 1);
         assert_eq!(second.photos.len(), 1);
@@ -142,21 +173,47 @@ mod tests {
     }
 
     #[test]
-    fn id_is_stable_blake3_hex_of_path() {
+    fn id_is_stable_blake3_of_project_and_path() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("a.jpg");
         fs::write(&f, b"x").unwrap();
         let conn = mem_conn();
 
-        let outcome = scan_folder(&conn, dir.path()).unwrap();
+        let outcome = scan_folder(&conn, PROJ, dir.path()).unwrap();
         let id = &outcome.photos[0].id;
 
         assert_eq!(id.len(), 64);
         assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
-        let expected = blake3::hash(f.to_string_lossy().as_bytes())
-            .to_hex()
-            .to_string();
+        let expected = photo_id(PROJ, &f.to_string_lossy());
         assert_eq!(id, &expected);
+    }
+
+    #[test]
+    fn same_path_in_two_projects_yields_independent_ids() {
+        // R3/AC2: the same path scanned under two project ids must produce two
+        // different photo ids (two independent records).
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.jpg");
+        fs::write(&f, b"x").unwrap();
+        let conn = mem_conn();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at) \
+             VALUES ('other', 'other', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let a = scan_folder(&conn, PROJ, dir.path()).unwrap();
+        let b = scan_folder(&conn, "other", dir.path()).unwrap();
+
+        assert_ne!(
+            a.photos[0].id, b.photos[0].id,
+            "same path, different project => different id"
+        );
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM photos", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "both projects hold an independent record");
     }
 
     #[test]
@@ -164,18 +221,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("a.jpg");
         fs::write(&f, b"x").unwrap();
-        let id = blake3::hash(f.to_string_lossy().as_bytes())
-            .to_hex()
-            .to_string();
+        let id = photo_id(PROJ, &f.to_string_lossy());
         let conn = mem_conn();
         conn.execute(
-            "INSERT INTO photos (id, path, status, created_at) \
-             VALUES (?1, ?2, 'keep', '2026-01-01T00:00:00Z')",
-            params![id, f.to_string_lossy()],
+            "INSERT INTO photos (id, project_id, path, status, created_at) \
+             VALUES (?1, ?2, ?3, 'keep', '2026-01-01T00:00:00Z')",
+            params![id, PROJ, f.to_string_lossy()],
         )
         .unwrap();
 
-        let outcome = scan_folder(&conn, dir.path()).unwrap();
+        let outcome = scan_folder(&conn, PROJ, dir.path()).unwrap();
 
         assert_eq!(outcome.photos.len(), 1);
         assert_eq!(
