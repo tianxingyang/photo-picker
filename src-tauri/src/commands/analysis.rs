@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::State;
 
+use crate::commands::current_project;
 use crate::error::AppError;
 use crate::AppState;
 
@@ -67,6 +68,9 @@ pub async fn analyze_pending(state: State<'_, AppState>) -> Result<AnalyzeSummar
     // RAII: clears analysis_running on every exit path below (including `?`).
     let _guard = RunGuard(&state.analysis_running);
 
+    // Analyze only the open project's pending photos.
+    let project_id = current_project(&state)?;
+
     // why: clone the Arc under a brief lock so the outer Mutex is released
     // before any RPC await — never hold the sidecar guard across .await.
     let sidecar = {
@@ -78,12 +82,15 @@ pub async fn analyze_pending(state: State<'_, AppState>) -> Result<AnalyzeSummar
 
     let pending = {
         let db = state.db.clone();
+        let project_id = project_id.clone();
         tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<Vec<(String, String)>> {
             let conn = db.blocking_lock();
-            let mut stmt = conn
-                .prepare_cached("SELECT id, path FROM photos WHERE analysis_state = 'pending'")?;
+            let mut stmt = conn.prepare_cached(
+                "SELECT id, path FROM photos \
+                 WHERE analysis_state = 'pending' AND project_id = ?1",
+            )?;
             let rows = stmt
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .query_map(params![project_id], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
@@ -196,20 +203,33 @@ fn persist_analysis(
 mod tests {
     use super::*;
 
+    const PROJ: &str = "test-project";
+
     fn mem_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../../migrations/0002_analysis.sql"))
-            .unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in [
+            include_str!("../../migrations/0001_initial.sql"),
+            include_str!("../../migrations/0002_analysis.sql"),
+            include_str!("../../migrations/0003_grouping.sql"),
+            include_str!("../../migrations/0004_projects.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at) \
+             VALUES (?1, ?1, '2026-01-01T00:00:00Z')",
+            params![PROJ],
+        )
+        .unwrap();
         conn
     }
 
     fn insert_pending(conn: &Connection, id: &str, path: &str) {
         conn.execute(
-            "INSERT INTO photos (id, path, status, created_at) \
-             VALUES (?1, ?2, 'pending', '2026-01-01T00:00:00Z')",
-            params![id, path],
+            "INSERT INTO photos (id, project_id, path, status, created_at) \
+             VALUES (?1, ?2, ?3, 'pending', '2026-01-01T00:00:00Z')",
+            params![id, PROJ, path],
         )
         .unwrap();
     }

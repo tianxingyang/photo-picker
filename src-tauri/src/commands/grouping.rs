@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::json;
 use tauri::State;
 
+use crate::commands::current_project;
 use crate::error::AppError;
 use crate::grouping::{cluster, parse_phash};
 use crate::AppState;
@@ -61,11 +62,14 @@ pub async fn group_photos(state: State<'_, AppState>) -> Result<GroupSummary, Ap
     // RAII: clears grouping_running on every exit path below (including `?`).
     let _guard = RunGuard(&state.grouping_running);
 
+    // Re-cluster only the open project's photos.
+    let project_id = current_project(&state)?;
+
     let db = state.db.clone();
     let summary =
         tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<GroupSummary> {
             let conn = db.blocking_lock();
-            regroup(&conn)
+            regroup(&conn, &project_id)
         })
         .await
         .map_err(|e| AppError::Io(e.to_string()))?
@@ -77,14 +81,15 @@ pub async fn group_photos(state: State<'_, AppState>) -> Result<GroupSummary, Ap
 /// Load `(id, phash)` for analysed photos, cluster, and rewrite the
 /// `phash_burst` groups in one transaction. Pure DB work — runs inside
 /// `spawn_blocking`, never holds the lock across `.await`.
-fn regroup(conn: &Connection) -> rusqlite::Result<GroupSummary> {
+fn regroup(conn: &Connection, project_id: &str) -> rusqlite::Result<GroupSummary> {
     // why: collect owned (id, phash_u64) inside the closure — never leak Row
     // borrows; skip rows whose phash fails to parse rather than crash.
     let raw = {
-        let mut stmt =
-            conn.prepare_cached("SELECT id, phash FROM photos WHERE phash IS NOT NULL")?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, phash FROM photos WHERE phash IS NOT NULL AND project_id = ?1",
+        )?;
         let rows = stmt
-            .query_map([], |r| {
+            .query_map(params![project_id], |r| {
                 let id: String = r.get(0)?;
                 let phash: String = r.get(1)?;
                 Ok((id, phash))
@@ -104,14 +109,15 @@ fn regroup(conn: &Connection) -> rusqlite::Result<GroupSummary> {
 
     let tx = conn.unchecked_transaction()?;
     {
-        // CASCADE drops member rows for the old phash_burst groups too.
+        // CASCADE drops member rows for the old phash_burst groups too. Scoped to
+        // this project so re-grouping one project never touches another's groups.
         tx.execute(
-            "DELETE FROM similar_groups WHERE method = ?1",
-            params![METHOD],
+            "DELETE FROM similar_groups WHERE method = ?1 AND project_id = ?2",
+            params![METHOD, project_id],
         )?;
 
         let mut insert_group = tx.prepare_cached(
-            "INSERT INTO similar_groups (id, method, params) VALUES (?1, ?2, ?3)",
+            "INSERT INTO similar_groups (id, project_id, method, params) VALUES (?1, ?2, ?3, ?4)",
         )?;
         let mut insert_member =
             tx.prepare_cached("INSERT INTO group_members (group_id, photo_id) VALUES (?1, ?2)")?;
@@ -119,7 +125,7 @@ fn regroup(conn: &Connection) -> rusqlite::Result<GroupSummary> {
         let mut grouped_photos = 0u32;
         for comp in &comps {
             let gid = derive_id(METHOD, comp);
-            insert_group.execute(params![gid, METHOD, params_json])?;
+            insert_group.execute(params![gid, project_id, METHOD, params_json])?;
             for photo_id in comp {
                 insert_member.execute(params![gid, photo_id])?;
                 grouped_photos += 1;
@@ -191,10 +197,12 @@ pub struct BrowseModel {
 /// bucket (singletons + not-yet-analysed + failed — anything not in a group).
 #[tauri::command]
 pub async fn list_groups(state: State<'_, AppState>) -> Result<BrowseModel, AppError> {
+    // Browse only the open project's photos and groups.
+    let project_id = current_project(&state)?;
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<BrowseModel> {
         let conn = db.blocking_lock();
-        load_browse_model(&conn)
+        load_browse_model(&conn, &project_id)
     })
     .await
     .map_err(|e| AppError::Io(e.to_string()))?
@@ -255,7 +263,7 @@ fn cmp_group(a: &BrowseGroup, b: &BrowseGroup) -> std::cmp::Ordering {
     cmp_opt_asc(ax, bx).then_with(|| a.id.cmp(&b.id))
 }
 
-fn load_browse_model(conn: &Connection) -> rusqlite::Result<BrowseModel> {
+fn load_browse_model(conn: &Connection, project_id: &str) -> rusqlite::Result<BrowseModel> {
     // Grouped members. Build a map keyed by group id, then sort within and across.
     let mut by_group: std::collections::HashMap<String, Vec<BrowsePhoto>> =
         std::collections::HashMap::new();
@@ -266,9 +274,9 @@ fn load_browse_model(conn: &Connection) -> rusqlite::Result<BrowseModel> {
              FROM group_members gm \
              JOIN photos p ON p.id = gm.photo_id \
              JOIN similar_groups sg ON sg.id = gm.group_id \
-             WHERE sg.method = ?1",
+             WHERE sg.method = ?1 AND sg.project_id = ?2",
         )?;
-        let rows = stmt.query_map(params![METHOD], |r| {
+        let rows = stmt.query_map(params![METHOD, project_id], |r| {
             let gid: String = r.get(0)?;
             Ok((gid, read_photo(r, 1)?))
         })?;
@@ -298,14 +306,14 @@ fn load_browse_model(conn: &Connection) -> rusqlite::Result<BrowseModel> {
             "SELECT p.id, p.path, p.status, p.shot_at, p.is_blurry, p.blur_score, \
              p.exposure_flag, p.analysis_state \
              FROM photos p \
-             WHERE NOT EXISTS ( \
+             WHERE p.project_id = ?2 AND NOT EXISTS ( \
                  SELECT 1 FROM group_members gm \
                  JOIN similar_groups sg ON sg.id = gm.group_id \
                  WHERE gm.photo_id = p.id AND sg.method = ?1 \
              )",
         )?;
         let mut v = stmt
-            .query_map(params![METHOD], |r| read_photo(r, 0))?
+            .query_map(params![METHOD, project_id], |r| read_photo(r, 0))?
             .collect::<rusqlite::Result<Vec<BrowsePhoto>>>()?;
         v.sort_by(cmp_in_group);
         v
@@ -318,23 +326,34 @@ fn load_browse_model(conn: &Connection) -> rusqlite::Result<BrowseModel> {
 mod tests {
     use super::*;
 
+    const PROJ: &str = "test-project";
+
     fn mem_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../../migrations/0002_analysis.sql"))
-            .unwrap();
-        conn.execute_batch(include_str!("../../migrations/0003_grouping.sql"))
-            .unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in [
+            include_str!("../../migrations/0001_initial.sql"),
+            include_str!("../../migrations/0002_analysis.sql"),
+            include_str!("../../migrations/0003_grouping.sql"),
+            include_str!("../../migrations/0004_projects.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at) \
+             VALUES (?1, ?1, '2026-01-01T00:00:00Z')",
+            params![PROJ],
+        )
+        .unwrap();
         conn
     }
 
     /// Insert a photo with a given (or NULL) phash already analysed.
     fn insert_photo(conn: &Connection, id: &str, phash: Option<&str>) {
         conn.execute(
-            "INSERT INTO photos (id, path, status, created_at, analysis_state, phash) \
-             VALUES (?1, ?2, 'pending', '2026-01-01T00:00:00Z', 'done', ?3)",
-            params![id, format!("/{id}.jpg"), phash],
+            "INSERT INTO photos (id, project_id, path, status, created_at, analysis_state, phash) \
+             VALUES (?1, ?2, ?3, 'pending', '2026-01-01T00:00:00Z', 'done', ?4)",
+            params![id, PROJ, format!("/{id}.jpg"), phash],
         )
         .unwrap();
     }
@@ -368,7 +387,7 @@ mod tests {
         insert_photo(&conn, "c", Some("ffffffffffffffff"));
         insert_photo(&conn, "d", Some("fffffffffffffffc")); // 2 bits from c
 
-        let summary = regroup(&conn).unwrap();
+        let summary = regroup(&conn, PROJ).unwrap();
         assert_eq!(summary.groups, 2);
         assert_eq!(summary.grouped_photos, 4);
 
@@ -387,7 +406,7 @@ mod tests {
         insert_photo(&conn, "b", Some("0000000000000003")); // ~a
         insert_photo(&conn, "lonely", Some("ffffffffffffffff")); // far from both
 
-        let summary = regroup(&conn).unwrap();
+        let summary = regroup(&conn, PROJ).unwrap();
         assert_eq!(summary.groups, 1);
         assert_eq!(summary.grouped_photos, 2);
 
@@ -409,7 +428,7 @@ mod tests {
         insert_photo(&conn, "no_phash", None); // not analysed for phash
         insert_photo(&conn, "bad_phash", Some("zzzz")); // unparseable, skipped
 
-        let summary = regroup(&conn).unwrap();
+        let summary = regroup(&conn, PROJ).unwrap();
         assert_eq!(summary.groups, 1);
         assert_eq!(summary.grouped_photos, 2);
         for absent in ["no_phash", "bad_phash"] {
@@ -432,13 +451,13 @@ mod tests {
         insert_photo(&conn, "c", Some("ffffffffffffffff"));
         insert_photo(&conn, "d", Some("fffffffffffffffc"));
 
-        regroup(&conn).unwrap();
+        regroup(&conn, PROJ).unwrap();
         let gids_first = all_group_ids(&conn);
         let members_first: Vec<Vec<String>> =
             gids_first.iter().map(|g| members_of(&conn, g)).collect();
 
         // Second run: same input => same ids, same members, no stale rows.
-        let summary = regroup(&conn).unwrap();
+        let summary = regroup(&conn, PROJ).unwrap();
         assert_eq!(summary.groups, 2);
 
         let gids_second = all_group_ids(&conn);
@@ -460,14 +479,14 @@ mod tests {
         insert_photo(&conn, "a", Some("0000000000000000"));
         insert_photo(&conn, "b", Some("0000000000000003"));
 
-        regroup(&conn).unwrap();
+        regroup(&conn, PROJ).unwrap();
         let first_gid = all_group_ids(&conn);
         assert_eq!(first_gid.len(), 1);
 
         // Add a third near-duplicate => the {a,b} group is replaced by {a,b,c}
         // with a different derived id; the old group must not linger.
         insert_photo(&conn, "c", Some("0000000000000005")); // near a/b
-        regroup(&conn).unwrap();
+        regroup(&conn, PROJ).unwrap();
 
         let gids = all_group_ids(&conn);
         assert_eq!(gids.len(), 1, "single group after re-cluster");
@@ -498,17 +517,17 @@ mod tests {
         analysis_state: &str,
     ) {
         conn.execute(
-            "INSERT INTO photos (id, path, status, created_at, shot_at, blur_score, analysis_state) \
-             VALUES (?1, ?2, ?3, '2026-01-01T00:00:00Z', ?4, ?5, ?6)",
-            params![id, format!("/{id}.jpg"), status, shot_at, blur, analysis_state],
+            "INSERT INTO photos (id, project_id, path, status, created_at, shot_at, blur_score, analysis_state) \
+             VALUES (?1, ?2, ?3, ?4, '2026-01-01T00:00:00Z', ?5, ?6, ?7)",
+            params![id, PROJ, format!("/{id}.jpg"), status, shot_at, blur, analysis_state],
         )
         .unwrap();
     }
 
     fn add_group(conn: &Connection, gid: &str, members: &[&str]) {
         conn.execute(
-            "INSERT INTO similar_groups (id, method, params) VALUES (?1, ?2, '{}')",
-            params![gid, METHOD],
+            "INSERT INTO similar_groups (id, project_id, method, params) VALUES (?1, ?2, ?3, '{}')",
+            params![gid, PROJ, METHOD],
         )
         .unwrap();
         for m in members {
@@ -555,7 +574,7 @@ mod tests {
         );
         add_group(&conn, "g1", &["a", "b", "c"]);
 
-        let model = load_browse_model(&conn).unwrap();
+        let model = load_browse_model(&conn, PROJ).unwrap();
         assert_eq!(model.groups.len(), 1);
         // 09:00 sharper(c) -> 09:00 blurrier(b) -> 10:00(a)
         assert_eq!(ids(&model.groups[0].photos), vec!["c", "b", "a"]);
@@ -594,7 +613,7 @@ mod tests {
         ins(&conn, "pending_one", "pending", None, None, "pending");
         ins(&conn, "failed_one", "reject", None, None, "failed");
 
-        let model = load_browse_model(&conn).unwrap();
+        let model = load_browse_model(&conn, PROJ).unwrap();
         let ung = ids(&model.ungrouped);
         // shot_at asc, NULLs last; single(07:00) first, then the two NULLs by id.
         assert_eq!(ung, vec!["single", "failed_one", "pending_one"]);
@@ -640,7 +659,7 @@ mod tests {
         );
         add_group(&conn, "g_early", &["early1", "early2"]);
 
-        let model = load_browse_model(&conn).unwrap();
+        let model = load_browse_model(&conn, PROJ).unwrap();
         let order: Vec<&str> = model.groups.iter().map(|g| g.id.as_str()).collect();
         assert_eq!(order, vec!["g_early", "g_late"]);
     }
@@ -648,7 +667,7 @@ mod tests {
     #[test]
     fn empty_db_yields_empty_model() {
         let conn = mem_conn();
-        let model = load_browse_model(&conn).unwrap();
+        let model = load_browse_model(&conn, PROJ).unwrap();
         assert!(model.groups.is_empty());
         assert!(model.ungrouped.is_empty());
     }
@@ -666,7 +685,7 @@ mod tests {
         );
         conn.execute("UPDATE photos SET is_blurry = 1 WHERE id = 'x'", [])
             .unwrap();
-        let model = load_browse_model(&conn).unwrap();
+        let model = load_browse_model(&conn, PROJ).unwrap();
         assert_eq!(model.ungrouped[0].is_blurry, Some(true));
     }
 
@@ -686,7 +705,7 @@ mod tests {
             "done",
         );
         conn.execute(
-            "INSERT INTO similar_groups (id, method, params) VALUES ('gc', 'clip', '{}')",
+            "INSERT INTO similar_groups (id, project_id, method, params) VALUES ('gc', 'test-project', 'clip', '{}')",
             [],
         )
         .unwrap();
@@ -696,7 +715,7 @@ mod tests {
         )
         .unwrap();
 
-        let model = load_browse_model(&conn).unwrap();
+        let model = load_browse_model(&conn, PROJ).unwrap();
         assert!(model.groups.is_empty(), "no phash_burst groups exist");
         assert_eq!(
             ids(&model.ungrouped),

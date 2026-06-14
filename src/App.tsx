@@ -6,9 +6,11 @@ import { groupPhotos } from "./api/groupsApi";
 import { basename, exportKeep, scanFolder, type ExportFailure } from "./api/photosApi";
 import { ABCompareViewer } from "./components/compare";
 import { GroupBrowseView } from "./components/browse";
+import { LandingView } from "./components/landing";
 import { clearDisplayCache } from "./hooks/useDisplaySrc";
 import { useGroupsStore } from "./store/groupsStore";
 import { usePhotosStore } from "./store/photosStore";
+import { useProjectsStore } from "./store/projectsStore";
 import { useCompareStore } from "./store/compareStore";
 import { describeAppError } from "./types/ipc";
 import type { PhotoId } from "./types/photo";
@@ -16,24 +18,43 @@ import type { PhotoId } from "./types/photo";
 const BTN =
   "rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary";
 
+const GHOST_BTN =
+  "rounded-md border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-border disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary";
+
 export function App() {
   const importedCount = usePhotosStore((s) => s.order.length);
   const addPhotos = usePhotosStore((s) => s.addPhotos);
   const loadGroups = useGroupsStore((s) => s.load);
+  const currentProjectId = useProjectsStore((s) => s.currentProjectId);
+  const closeProject = useProjectsStore((s) => s.close);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [failures, setFailures] = useState<ExportFailure[]>([]);
 
-  // why: hydrate the browse grid on mount so photos from a prior session
-  // (persisted in SQLite) show immediately, not only after a re-import.
-  // loadGroups is a stable zustand action, so this runs once.
+  // why: hydrate the browse grid whenever a project opens — its photos
+  // (persisted in SQLite, scoped to this project) show immediately, not only
+  // after a re-import. Re-runs when the open project changes; skipped on the
+  // landing page (no project => nothing to load).
   useEffect(() => {
+    if (currentProjectId === null) return;
     loadGroups().catch((e) => {
       const { message } = describeAppError(e);
       setError(`加载照片失败：${message}`);
     });
-  }, [loadGroups]);
+  }, [currentProjectId, loadGroups]);
+
+  async function onSwitchProject() {
+    if (busy) return;
+    setError(null);
+    setNotice(null);
+    setFailures([]);
+    try {
+      await closeProject();
+    } catch (e) {
+      setError(`切换项目失败：${describeAppError(e).message}`);
+    }
+  }
 
   async function onImport() {
     if (busy) return;
@@ -118,12 +139,25 @@ export function App() {
     openFor(id);
   }
 
+  // Blocking entry flow: no open project => show the project picker.
+  if (currentProjectId === null) {
+    return <LandingView />;
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* A/B compare overlay — rendered at App level so it covers the full viewport. */}
       <ABCompareViewer />
       <header className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
         <h1 className="text-base font-semibold">Photo Picker</h1>
+        <button
+          type="button"
+          onClick={() => void onSwitchProject()}
+          disabled={busy}
+          className={GHOST_BTN}
+        >
+          切换项目
+        </button>
         <button type="button" onClick={onImport} disabled={busy} className={BTN}>
           导入文件夹
         </button>

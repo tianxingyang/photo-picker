@@ -10,6 +10,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0001_initial.sql"),
     include_str!("../../migrations/0002_analysis.sql"),
     include_str!("../../migrations/0003_grouping.sql"),
+    include_str!("../../migrations/0004_projects.sql"),
 ];
 
 pub fn open(app_handle: &AppHandle) -> Result<Connection, DbErr> {
@@ -67,17 +68,31 @@ mod tests {
         .unwrap()
     }
 
+    /// Seed a project row so FK-bearing photo inserts succeed (0004 makes
+    /// `photos.project_id` a NOT NULL FK).
+    fn insert_project(conn: &Connection, id: &str) {
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at) \
+             VALUES (?1, ?1, '2026-01-01T00:00:00Z')",
+            [id],
+        )
+        .unwrap();
+    }
+
     #[test]
     fn fresh_db_runs_all_migrations_and_builds_analysis_columns() {
         let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
         run_migrations(&conn).unwrap();
 
         assert_eq!(user_version(&conn), MIGRATIONS.len() as u32);
 
-        // All analysis columns are addressable and default sanely.
+        insert_project(&conn, "proj");
+        // All analysis columns are addressable and default sanely; project_id is
+        // a required FK after 0004.
         conn.execute(
-            "INSERT INTO photos (id, path, status, created_at) \
-             VALUES ('a', '/x.jpg', 'pending', '2026-01-01T00:00:00Z')",
+            "INSERT INTO photos (id, project_id, path, status, created_at) \
+             VALUES ('a', 'proj', '/x.jpg', 'pending', '2026-01-01T00:00:00Z')",
             [],
         )
         .unwrap();
@@ -103,11 +118,15 @@ mod tests {
     }
 
     #[test]
-    fn v1_db_upgrades_and_existing_rows_become_pending() {
-        // Simulate a v1 DB: only 0001 applied, user_version pinned to 1.
+    fn v3_db_upgrades_to_v4_and_discards_preexisting_photos() {
+        // Simulate a v3 DB (0001..0003 applied) holding a pre-isolation photo.
+        // Per PRD R5, 0004 rebuilds the tables and that data is discarded.
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0]).unwrap();
-        conn.pragma_update(None, "user_version", 1u32).unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[0..3] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 3u32).unwrap();
         conn.execute(
             "INSERT INTO photos (id, path, status, created_at) \
              VALUES ('legacy', '/old.jpg', 'keep', '2026-01-01T00:00:00Z')",
@@ -115,26 +134,36 @@ mod tests {
         )
         .unwrap();
 
-        // Upgrade applies only 0002 (0001 is skipped as version <= current).
+        // Upgrade applies only 0004 (0001..0003 skipped as version <= current).
         run_migrations(&conn).unwrap();
 
         assert_eq!(user_version(&conn), MIGRATIONS.len() as u32);
+        // The legacy row is gone — 0004 dropped+recreated photos (R5).
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM photos", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(
-            analysis_state_of(&conn, "legacy"),
-            "pending",
-            "existing rows must default to pending so they get analyzed"
+            count, 0,
+            "0004 rebuilds photos; pre-isolation data discarded"
         );
-        // status is untouched by the analysis migration.
-        let status: String = conn
-            .query_row("SELECT status FROM photos WHERE id = 'legacy'", [], |r| {
+        // The new project-scoped schema is in place: project_id is queryable.
+        insert_project(&conn, "proj");
+        conn.execute(
+            "INSERT INTO photos (id, project_id, path, status, created_at) \
+             VALUES ('n', 'proj', '/new.jpg', 'pending', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let pid: String = conn
+            .query_row("SELECT project_id FROM photos WHERE id = 'n'", [], |r| {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(status, "keep");
+        assert_eq!(pid, "proj");
     }
 
     #[test]
-    fn grouping_tables_build_at_version_3() {
+    fn isolation_tables_build_at_version_4() {
         let conn = Connection::open_in_memory().unwrap();
         // why: CASCADE only fires with foreign_keys ON (prod sets it in db::open).
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
@@ -142,30 +171,35 @@ mod tests {
 
         assert_eq!(
             user_version(&conn),
-            3,
-            "0003_grouping bumps user_version to 3"
+            4,
+            "0004_projects bumps user_version to 4"
         );
 
-        // Both grouping tables must be queryable (would error if not created).
+        // The project + grouping tables must be queryable (would error if not created).
+        let projects: i64 = conn
+            .query_row("SELECT count(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
         let groups: i64 = conn
             .query_row("SELECT count(*) FROM similar_groups", [], |r| r.get(0))
             .unwrap();
         let members: i64 = conn
             .query_row("SELECT count(*) FROM group_members", [], |r| r.get(0))
             .unwrap();
+        assert_eq!(projects, 0);
         assert_eq!(groups, 0);
         assert_eq!(members, 0);
 
         // ON DELETE CASCADE: deleting a group must remove its member rows.
+        insert_project(&conn, "proj");
         conn.execute(
-            "INSERT INTO photos (id, path, status, created_at) \
-             VALUES ('p', '/p.jpg', 'pending', '2026-01-01T00:00:00Z')",
+            "INSERT INTO photos (id, project_id, path, status, created_at) \
+             VALUES ('p', 'proj', '/p.jpg', 'pending', '2026-01-01T00:00:00Z')",
             [],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO similar_groups (id, method, params) \
-             VALUES ('g', 'phash_burst', '{}')",
+            "INSERT INTO similar_groups (id, project_id, method, params) \
+             VALUES ('g', 'proj', 'phash_burst', '{}')",
             [],
         )
         .unwrap();
@@ -180,6 +214,75 @@ mod tests {
             .query_row("SELECT count(*) FROM group_members", [], |r| r.get(0))
             .unwrap();
         assert_eq!(members, 0, "ON DELETE CASCADE clears member rows");
+    }
+
+    #[test]
+    fn delete_project_cascades_photos_and_groups() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        run_migrations(&conn).unwrap();
+
+        insert_project(&conn, "p1");
+        insert_project(&conn, "p2");
+        // p1 owns a photo that is a member of a p1 group.
+        conn.execute(
+            "INSERT INTO photos (id, project_id, path, status, created_at) \
+             VALUES ('a', 'p1', '/a.jpg', 'pending', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO similar_groups (id, project_id, method, params) \
+             VALUES ('g', 'p1', 'phash_burst', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO group_members (group_id, photo_id) VALUES ('g', 'a')",
+            [],
+        )
+        .unwrap();
+        // p2 owns an independent photo that must survive p1's deletion.
+        conn.execute(
+            "INSERT INTO photos (id, project_id, path, status, created_at) \
+             VALUES ('b', 'p2', '/a.jpg', 'pending', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        conn.execute("DELETE FROM projects WHERE id = 'p1'", [])
+            .unwrap();
+
+        // p1's photo, group, and member rows all cascade away.
+        let photos: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM photos WHERE project_id = 'p1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let groups: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM similar_groups WHERE project_id = 'p1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let members: i64 = conn
+            .query_row("SELECT count(*) FROM group_members", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(photos, 0, "p1 photos cascade on project delete");
+        assert_eq!(groups, 0, "p1 groups cascade on project delete");
+        assert_eq!(members, 0, "member rows cascade off both photo and group");
+        // p2 is untouched — same path, independent record.
+        let p2: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM photos WHERE project_id = 'p2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(p2, 1, "other projects are unaffected by a delete");
     }
 
     #[test]

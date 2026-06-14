@@ -6,6 +6,7 @@ use rusqlite::{params, Connection};
 use serde_json::json;
 use tauri::State;
 
+use crate::commands::current_project;
 use crate::error::AppError;
 use crate::scanner::{self, ScanOutcome};
 use crate::AppState;
@@ -23,13 +24,15 @@ pub async fn scan_folder(
     if !root.is_dir() {
         return Err(AppError::NotFound(format!("not a directory: {path}")));
     }
+    // Scope the import to the open project — photo ids derive from it (R1/R3).
+    let project_id = current_project(&state)?;
 
     // why: clone the Arc so the DB Connection is locked inside the blocking
     // thread (blocking_lock), never held across the command's .await.
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db.blocking_lock();
-        scanner::scan_folder(&conn, &root)
+        scanner::scan_folder(&conn, &project_id, &root)
     })
     .await
     .map_err(|e| AppError::Io(e.to_string()))?
@@ -102,13 +105,15 @@ pub async fn export_keep(
     if !dest.is_dir() {
         return Err(AppError::Validation(format!("not a directory: {dest_dir}")));
     }
+    // Export only the open project's keeps.
+    let project_id = current_project(&state)?;
 
     // 1. Read the keep source paths. DB work runs inside spawn_blocking and the
     //    lock is released before the (potentially long) copy phase below.
     let db = state.db.clone();
     let paths = tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<Vec<String>> {
         let conn = db.blocking_lock();
-        select_keep_paths(&conn)
+        select_keep_paths(&conn, &project_id)
     })
     .await
     .map_err(|e| AppError::Io(e.to_string()))?
@@ -206,10 +211,12 @@ fn update_status(conn: &Connection, id: &str, status: &str) -> rusqlite::Result<
     )
 }
 
-/// Pure DB helper — the `status='keep'` source paths, run inside spawn_blocking.
-fn select_keep_paths(conn: &Connection) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare_cached("SELECT path FROM photos WHERE status = 'keep'")?;
-    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+/// Pure DB helper — the open project's `status='keep'` source paths, run inside
+/// spawn_blocking.
+fn select_keep_paths(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt =
+        conn.prepare_cached("SELECT path FROM photos WHERE status = 'keep' AND project_id = ?1")?;
+    let rows = stmt.query_map(params![project_id], |r| r.get::<_, String>(0))?;
     rows.collect()
 }
 
@@ -388,18 +395,33 @@ fn resolve_target(dest: &Path, file_name: &OsStr) -> Option<(PathBuf, bool)> {
 mod tests {
     use super::*;
 
+    const PROJ: &str = "test-project";
+
     fn mem_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../migrations/0001_initial.sql"))
-            .unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in [
+            include_str!("../../migrations/0001_initial.sql"),
+            include_str!("../../migrations/0002_analysis.sql"),
+            include_str!("../../migrations/0003_grouping.sql"),
+            include_str!("../../migrations/0004_projects.sql"),
+        ] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at) \
+             VALUES (?1, ?1, '2026-01-01T00:00:00Z')",
+            params![PROJ],
+        )
+        .unwrap();
         conn
     }
 
     fn insert_photo(conn: &Connection, id: &str, status: &str) {
         conn.execute(
-            "INSERT INTO photos (id, path, status, created_at) \
-             VALUES (?1, ?2, ?3, '2026-01-01T00:00:00Z')",
-            params![id, format!("/{id}.jpg"), status],
+            "INSERT INTO photos (id, project_id, path, status, created_at) \
+             VALUES (?1, ?2, ?3, ?4, '2026-01-01T00:00:00Z')",
+            params![id, PROJ, format!("/{id}.jpg"), status],
         )
         .unwrap();
     }
@@ -506,9 +528,35 @@ mod tests {
         insert_photo(&conn, "k2", "keep");
         insert_photo(&conn, "r1", "reject");
         insert_photo(&conn, "p1", "pending");
-        let mut paths = select_keep_paths(&conn).unwrap();
+        let mut paths = select_keep_paths(&conn, PROJ).unwrap();
         paths.sort();
         assert_eq!(paths, vec!["/k1.jpg".to_string(), "/k2.jpg".to_string()]);
+    }
+
+    #[test]
+    fn select_keep_paths_is_project_scoped() {
+        // A keep in another project must never appear in this project's export.
+        let conn = mem_conn();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at) \
+             VALUES ('other', 'other', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        insert_photo(&conn, "mine", "keep"); // belongs to PROJ
+        conn.execute(
+            "INSERT INTO photos (id, project_id, path, status, created_at) \
+             VALUES ('theirs', 'other', '/theirs.jpg', 'keep', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let paths = select_keep_paths(&conn, PROJ).unwrap();
+        assert_eq!(
+            paths,
+            vec!["/mine.jpg".to_string()],
+            "other project's keep excluded"
+        );
     }
 
     #[test]
