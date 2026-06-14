@@ -284,3 +284,42 @@ M1 parent 集成验收：自动化全绿（Rust 61 tests / Python 25 tests / tsc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: 项目级工作区隔离 (project-isolation)
+
+**Date**: 2026-06-14
+**Task**: Project-based workspace isolation
+**Branch**: `feat/project-isolation` (PR #10, merged) → `chore/finish-project-isolation` (wrap-up)
+
+### Summary
+
+单 DB 改为项目级隔离会话。迁移 0004 新增 `projects` 表（UUID v4 主键），drop+重建 `photos`/`similar_groups`/`group_members` 并加 `project_id` TEXT FK（`ON DELETE CASCADE`）+ `UNIQUE(project_id, path)`；按 R5 丢弃 dev 旧数据。照片 id 改为 `blake3(project_id + "\n" + path)`，同路径在两项目独立成两条记录。`AppState.current_project: Mutex<Option<String>>` + `current_project()` 守卫贯穿 `scan`/`export`/`analyze`/`group`/`list_groups`；`set_status`/`transcode` 走全局唯一 id 不改。新增 `create/list/open/close/delete_project` 命令。前端落地页路由（名称+照片数+最后打开、新建、删除二次确认），打开/关闭项目清空 photo/group/compare store + display cache。后端 70 测试 / clippy / fmt / tsc / vite build 全绿。对抗复核 16/16 spec 断言 supported，契约沉淀进 `backend/database-guidelines.md` + `error-handling.md`。
+
+### Main Changes
+
+- backend: migration 0004 + scanner id 派生 + AppState 守卫 + projects 命令 + 5 命令作用域化。
+- frontend: projectsApi / projectsStore / LandingView + App.tsx 路由。
+- spec: project-isolation 契约（schema / id / 作用域 / Validation 守卫）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b79f5be` | feat(m2): project-based workspace isolation (#10) |
+| `db5e376` | docs(spec): capture project-isolation backend contracts |
+
+### Testing
+
+- [OK] cargo test 70 passed; clippy -D warnings clean; cargo fmt --check clean.
+- [OK] tsc --noEmit clean; vite build pass; new frontend files eslint clean.
+- [OK] spec adversarial verify 16/16 supported (file:line evidence).
+- [PENDING] GUI 冒烟由用户驱动（多项目隔离 + 删除级联）。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 整图模糊把浅景深误判为模糊（bokeh backlog），后续独立任务处理。
