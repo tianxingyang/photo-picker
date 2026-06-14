@@ -133,6 +133,14 @@ for **command-boundary input/enum validation** (e.g. `set_status` rejects a stat
 outside `'pending'|'keep'|'reject'`). Use it for client/argument errors that are
 neither a DB fault, a missing entity (`NotFound`), nor infra (`Io`/`Sidecar`).
 
+> **Precondition guards also use `Validation` (task `06-13-project-isolation`).** The
+> `commands::current_project()` helper returns `Validation("no project open")` when a
+> photo-scoped command runs with no project open — a missing *current selection*, not a
+> bad argument. Keep the distinction from `NotFound`: a project **id that does not
+> exist** (e.g. `open_project` / `delete_project` on a vanished id → 0 rows) is
+> `NotFound("no project with id: …")`. "Nothing selected" → `Validation`; "this id is
+> not in the table" → `NotFound`.
+
 > **Paired contract.** `error.rs::AppError` and `src/types/ipc.ts` (`AppErrorPayload`
 > union **and** the `KINDS` array) MUST change together. The frontend's
 > `describeAppError` degrades gracefully on an unknown `kind` (keeps the `message`),
