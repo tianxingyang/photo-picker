@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::json;
-use tauri::State;
+use tauri::{AppHandle, State};
 
-use crate::commands::current_project;
+use crate::commands::{current_project, progress};
 use crate::error::AppError;
 use crate::grouping::{cluster, parse_phash};
 use crate::AppState;
@@ -47,7 +47,10 @@ pub struct GroupSummary {
 /// Single-flight: a concurrent invocation returns a zero summary immediately
 /// rather than double-clustering against the same rows.
 #[tauri::command]
-pub async fn group_photos(state: State<'_, AppState>) -> Result<GroupSummary, AppError> {
+pub async fn group_photos(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<GroupSummary, AppError> {
     // why: single-flight — bail out if another run already holds the flag.
     if state
         .grouping_running
@@ -65,17 +68,31 @@ pub async fn group_photos(state: State<'_, AppState>) -> Result<GroupSummary, Ap
     // Re-cluster only the open project's photos.
     let project_id = current_project(&state)?;
 
-    let db = state.db.clone();
-    let summary =
-        tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<GroupSummary> {
-            let conn = db.blocking_lock();
-            regroup(&conn, &project_id)
-        })
-        .await
-        .map_err(|e| AppError::Io(e.to_string()))?
-        .map_err(|e| AppError::Db(e.to_string()))?;
+    // Grouping is fast (in-process clustering) — an indeterminate phase marker,
+    // not per-item progress.
+    progress::running(&app, progress::PHASE_GROUP, 0, None);
 
-    Ok(summary)
+    let db = state.db.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<GroupSummary> {
+        let conn = db.blocking_lock();
+        regroup(&conn, &project_id)
+    })
+    .await
+    .map_err(|e| AppError::Io(e.to_string()))
+    .and_then(|r| r.map_err(|e| AppError::Db(e.to_string())));
+
+    // why: always emit a terminal tick (even on failure) so the bar clears
+    // instead of sticking on the indeterminate "grouping" marker.
+    match result {
+        Ok(summary) => {
+            progress::terminal(&app, progress::PHASE_GROUP, 0, None, progress::STATUS_DONE);
+            Ok(summary)
+        }
+        Err(e) => {
+            progress::terminal(&app, progress::PHASE_GROUP, 0, None, progress::STATUS_ERROR);
+            Err(e)
+        }
+    }
 }
 
 /// Load `(id, phash)` for analysed photos, cluster, and rewrite the

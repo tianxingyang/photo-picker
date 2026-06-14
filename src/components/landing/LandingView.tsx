@@ -164,19 +164,20 @@ export function LandingView() {
                 >
                   打开
                 </button>
+                {/* Clear text button (not a faint icon) — the delete affordance
+                    was hard to discover before. Danger-tinted, fills red on hover. */}
                 <button
                   type="button"
                   onClick={() => setPendingDelete(p)}
                   disabled={busy}
                   aria-label={`删除项目 ${p.name}`}
-                  title="删除项目"
-                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-reject disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  className="shrink-0 inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm font-medium text-reject transition-colors hover:bg-reject hover:text-white disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   <svg
                     aria-hidden="true"
                     viewBox="0 0 20 20"
                     fill="currentColor"
-                    className="h-4 w-4"
+                    className="h-3.5 w-3.5"
                   >
                     <path
                       fillRule="evenodd"
@@ -184,6 +185,7 @@ export function LandingView() {
                       d="M8.75 1.5a1.75 1.75 0 0 0-1.715 1.4L6.83 4H3.75a.75.75 0 0 0 0 1.5h.31l.69 10.36A2.25 2.25 0 0 0 7 18h6a2.25 2.25 0 0 0 2.25-2.14L15.94 5.5h.31a.75.75 0 0 0 0-1.5h-3.08l-.205-1.1A1.75 1.75 0 0 0 11.25 1.5h-2.5Zm2.95 2.5-.13-.7a.25.25 0 0 0-.245-.2H8.675a.25.25 0 0 0-.246.2L8.3 4h3.4ZM8.5 7.75a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-1.5 0v-5Zm3.5-.75a.75.75 0 0 0-.75.75v5a.75.75 0 0 0 1.5 0v-5A.75.75 0 0 0 12 7Z"
                     />
                   </svg>
+                  删除
                 </button>
               </li>
             ))}

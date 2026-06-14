@@ -27,6 +27,18 @@
   }
 }
 
+/* Indeterminate progress: a segment sliding left→right. Used by
+   PipelineProgressBar when total is unknown (import-discovering, grouping).
+   prefers-reduced-motion parks it as a static centered segment. */
+@keyframes progressIndeterminate {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
 html,
 body,
 #root {
