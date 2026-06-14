@@ -4,9 +4,9 @@ use std::time::UNIX_EPOCH;
 
 use rusqlite::{params, Connection};
 use serde_json::json;
-use tauri::State;
+use tauri::{AppHandle, State};
 
-use crate::commands::current_project;
+use crate::commands::{current_project, first_sidecar, progress};
 use crate::error::AppError;
 use crate::scanner::{self, ScanOutcome};
 use crate::AppState;
@@ -17,6 +17,7 @@ const STATUSES: [&str; 3] = ["pending", "keep", "reject"];
 
 #[tauri::command]
 pub async fn scan_folder(
+    app: AppHandle,
     path: String,
     state: State<'_, AppState>,
 ) -> Result<ScanOutcome, AppError> {
@@ -27,16 +28,51 @@ pub async fn scan_folder(
     // Scope the import to the open project — photo ids derive from it (R1/R3).
     let project_id = current_project(&state)?;
 
+    // why: show the import bar immediately — the walk can run a while before the
+    // matched total is known, so emit an indeterminate tick up front.
+    progress::running(&app, progress::PHASE_IMPORT, 0, None);
+
     // why: clone the Arc so the DB Connection is locked inside the blocking
     // thread (blocking_lock), never held across the command's .await.
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    // why: the scanner runs in spawn_blocking ('static), so the progress closure
+    // owns its own AppHandle clone rather than borrowing.
+    let app_cb = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let conn = db.blocking_lock();
-        scanner::scan_folder(&conn, &project_id, &root)
+        scanner::scan_folder(&conn, &project_id, &root, &|done, total| {
+            progress::running(&app_cb, progress::PHASE_IMPORT, done, total);
+        })
     })
     .await
-    .map_err(|e| AppError::Io(e.to_string()))?
-    .map_err(|e| AppError::Db(e.to_string()))
+    .map_err(|e| AppError::Io(e.to_string()))
+    .and_then(|r| r.map_err(|e| AppError::Db(e.to_string())));
+
+    // why: always emit a terminal tick (even on failure) so the import bar
+    // clears instead of sticking on the indeterminate "discovering" marker.
+    match result {
+        Ok(outcome) => {
+            let total = outcome.photos.len() as u32;
+            progress::terminal(
+                &app,
+                progress::PHASE_IMPORT,
+                total,
+                Some(total),
+                progress::STATUS_DONE,
+            );
+            Ok(outcome)
+        }
+        Err(e) => {
+            progress::terminal(
+                &app,
+                progress::PHASE_IMPORT,
+                0,
+                None,
+                progress::STATUS_ERROR,
+            );
+            Err(e)
+        }
+    }
 }
 
 /// Set one photo's keep/reject/pending status. Single-row, idempotent UPDATE —
@@ -172,14 +208,9 @@ pub async fn transcode_for_display(
     }
     std::fs::create_dir_all(&dest_dir).map_err(|e| AppError::Io(e.to_string()))?;
 
-    // 4. Call sidecar: clone Arc then release lock before .await (echo_via_sidecar pattern).
-    let sidecar = {
-        let guard = state.sidecar.lock().await;
-        guard
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| AppError::Sidecar("not started".into()))?
-    };
+    // 4. Call a sidecar (the first in the pool) for the one-shot transcode;
+    //    clone the Arc then release the lock before .await.
+    let sidecar = first_sidecar(&state).await?;
 
     match sidecar
         .call(

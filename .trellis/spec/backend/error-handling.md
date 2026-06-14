@@ -104,6 +104,51 @@ match sidecar.call("analyze", payload).await {
 - `persist_analysis` Err → `analysis_state='failed'` + `analysis_error` set, analysis columns untouched.
 - Pending query returns only `'pending'` rows (excludes `'done'`/`'failed'`).
 
+### Sidecar parallelism — a POOL of single-threaded processes, NOT in-process threads
+
+> **Established 2026-06-15** (task `06-14-analyze-perf-progress`). The Python
+> sidecar is launched by Rust with **piped stdin/stdout**. On Windows (verified
+> with Python 3.14) **in-process Python concurrency does not work** in that
+> context, and this was confirmed by isolation tests — do NOT re-attempt it:
+>
+> - `ProcessPoolExecutor` — `multiprocessing` spawn **deadlocks** bootstrapping
+>   workers under the piped-stdio parent; `analyze` calls never return and the
+>   Rust 30s call-timeout fires with zero completions.
+> - `ThreadPoolExecutor` (or any background thread) — **a thread parked in a
+>   stdin read cannot coexist with the IPC**: writing the stdout pipe fd from any
+>   thread while another is blocked in a stdin read raises `OSError(EINVAL)` (both
+>   buffered `flush` and raw `os.write`), and the analyze workers hang. Writes
+>   succeed only when NO thread is blocked in a stdin read — i.e. the original
+>   single-threaded loop.
+>
+> **Rule:** `main.py` stays the proven single-threaded synchronous loop
+> (`for raw in sys.stdin: write(handle(line))`, no threads/pools). Parallelism is
+> achieved by **Rust spawning a pool of N sidecar processes** (`AppState.sidecars:
+> Mutex<Vec<Arc<Sidecar>>>`, `N = min(cpu-1, 4)` via `lib.rs::sidecar_pool_size`),
+> with `analyze_pending` routing each photo to `pool[idx % n]` under
+> `buffer_unordered(n)`. `transcode`/`echo` use `pool[0]`. The `Sidecar` transport
+> is id-keyed, so two requests landing on one process just serialize there — an
+> efficiency nuance, never a demux hazard. Cap N to bound per-process numpy memory.
+
+### Pipeline progress events (import / analyze / group)
+
+> **Established 2026-06-15** (same task). Long pipeline commands stream progress
+> via a single global Tauri event so the frontend renders one non-blocking bar:
+>
+> - Event name `pipeline://progress` (the `:`/`/` chars are valid per tauri
+>   `event_name.rs::is_event_name_valid` — verified). Payload (serde camelCase):
+>   `{ phase: "import"|"analyze"|"group", done: u32, total: Option<u32>, status:
+>   "running"|"done"|"cancelled"|"error" }`. `total=null` ⇒ indeterminate.
+> - Emitting is **best-effort**: `let _ = app.emit(...)` — a failed emit MUST NOT
+>   abort the real work. `commands/progress.rs` owns the helper.
+> - `analyze_pending` is **cancellable** via `AppState.analysis_cancel: AtomicBool`
+>   (set by the `cancel_analysis` command, reset at batch entry): not-yet-started
+>   photos skip and stay `pending`; in-flight ones finish and persist. An **infra
+>   stop reuses the same flag** but reports terminal status `error` (and returns
+>   `Err`), never masquerading as a user `cancelled` — `AnalyzeSummary.cancelled`
+>   is true ONLY on a real user cancel, which the frontend uses to skip
+>   auto-grouping partial data.
+
 ---
 
 ## Error Propagation Rules

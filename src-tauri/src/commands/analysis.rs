@@ -1,11 +1,12 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use futures::stream::StreamExt;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::State;
+use tauri::{AppHandle, State};
 
-use crate::commands::current_project;
+use crate::commands::{current_project, progress, sidecar_pool};
 use crate::error::AppError;
 use crate::AppState;
 
@@ -25,6 +26,9 @@ impl Drop for RunGuard<'_> {
 pub struct AnalyzeSummary {
     pub analyzed: u32,
     pub failed: u32,
+    // why: true when the user cancelled mid-batch (remaining rows stay pending).
+    // The frontend uses it to skip auto-grouping partial data after a cancel.
+    pub cancelled: bool,
 }
 
 /// Deserialized `analyze` op success result. Field names match the camelCase
@@ -40,20 +44,40 @@ pub struct AnalysisResult {
     pub phash: String,
 }
 
-/// Analyze every `analysis_state='pending'` photo by dispatching the single
-/// `analyze` op serially through the sidecar, persisting each result before
-/// moving on (incremental: an interruption never loses completed progress).
+/// Per-photo dispatch outcome inside the bounded-concurrency stream.
+enum Outcome {
+    Ok,
+    Failed,
+    /// Cancelled before this photo started (or after an infra stop) — skipped,
+    /// the row stays `pending`.
+    Skipped,
+    /// Transport/infra failure: stop feeding the rest of the batch.
+    Transport(AppError),
+}
+
+/// Analyze every `analysis_state='pending'` photo by dispatching the `analyze`
+/// op across the **sidecar pool** with one in-flight analysis per process,
+/// persisting each result as it completes and emitting a progress event. Each
+/// Python sidecar is single-threaded; running N of them is what gives multicore
+/// analysis (in-process Python threads are unstable under piped stdio on
+/// Windows — see lib.rs AppState).
 ///
 /// `failed` counts per-file decode failures only (the op ran but the file was
-/// bad), which are persisted as `analysis_state='failed'`. An infra failure
-/// (sidecar down / timeout / DB error) stops the batch early and leaves the
-/// remaining rows `pending`, so a re-run resumes them — those rows are never
-/// marked `failed`. Already-`done` rows are skipped, so a re-run is a no-op.
+/// bad), persisted as `analysis_state='failed'`. An infra failure (sidecar down
+/// / timeout / DB error) sets the cancel flag and stops feeding new photos; the
+/// remaining rows stay `pending` so a re-run resumes them. Already-`done` rows
+/// are skipped, so a re-run is a no-op.
+///
+/// Cancellation: `cancel_analysis` sets `analysis_cancel`; not-yet-started
+/// photos are skipped (stay `pending`), in-flight analyses finish and persist.
 ///
 /// Single-flight: a concurrent invocation returns an empty summary immediately
 /// rather than double-processing the same pending rows.
 #[tauri::command]
-pub async fn analyze_pending(state: State<'_, AppState>) -> Result<AnalyzeSummary, AppError> {
+pub async fn analyze_pending(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AnalyzeSummary, AppError> {
     // why: single-flight — bail out if another run already holds the flag.
     if state
         .analysis_running
@@ -63,22 +87,21 @@ pub async fn analyze_pending(state: State<'_, AppState>) -> Result<AnalyzeSummar
         return Ok(AnalyzeSummary {
             analyzed: 0,
             failed: 0,
+            cancelled: false,
         });
     }
     // RAII: clears analysis_running on every exit path below (including `?`).
     let _guard = RunGuard(&state.analysis_running);
+    // Fresh batch: clear any stale cancel from a previous run.
+    state.analysis_cancel.store(false, Ordering::Release);
 
     // Analyze only the open project's pending photos.
     let project_id = current_project(&state)?;
 
-    // why: clone the Arc under a brief lock so the outer Mutex is released
-    // before any RPC await — never hold the sidecar guard across .await.
-    let sidecar = {
-        let guard = state.sidecar.lock().await;
-        guard.as_ref().cloned().ok_or_else(|| {
-            AppError::Sidecar("not started; check that uv and python are on PATH".into())
-        })?
-    };
+    // Clone the sidecar pool out (cheap Arc clones); released before any await.
+    // Concurrency = pool size: one in-flight analyze per sidecar process.
+    let pool = sidecar_pool(&state).await?;
+    let n = pool.len();
 
     let pending = {
         let db = state.db.clone();
@@ -99,22 +122,109 @@ pub async fn analyze_pending(state: State<'_, AppState>) -> Result<AnalyzeSummar
         .map_err(|e| AppError::Db(e.to_string()))?
     };
 
+    let total = pending.len() as u32;
+    // why: out-of-order completions need a shared counter so progress is
+    // monotonic regardless of which photo finishes first.
+    let done = AtomicUsize::new(0);
+
+    // Bounded-concurrency dispatch: up to `n` analyses in flight, each routed to
+    // a distinct sidecar by index (idx % n). The futures borrow pool/state/app
+    // for the lifetime of the stream (all consumed before this fn returns).
+    let mut stream =
+        futures::stream::iter(pending.into_iter().enumerate().map(|(idx, (id, path))| {
+            let pool = &pool;
+            let state = &state;
+            let app = &app;
+            let done = &done;
+            async move {
+                // why: check cancel BEFORE starting so a cancelled/​stopped batch
+                // stops feeding new work; in-flight ones already past this point
+                // finish and persist.
+                if state.analysis_cancel.load(Ordering::Acquire) {
+                    return Outcome::Skipped;
+                }
+                // Route to one sidecar; buffer_unordered(n) keeps ≤ n in flight, so
+                // the first n items hit distinct processes (true parallelism).
+                let sidecar = &pool[idx % n];
+                match analyze_one(sidecar, state, &id, &path).await {
+                    Ok(ok) => {
+                        let d = done.fetch_add(1, Ordering::AcqRel) as u32 + 1;
+                        progress::running(app, progress::PHASE_ANALYZE, d, Some(total));
+                        if ok {
+                            Outcome::Ok
+                        } else {
+                            Outcome::Failed
+                        }
+                    }
+                    Err(e) => Outcome::Transport(e),
+                }
+            }
+        }))
+        .buffer_unordered(n);
+
     let mut analyzed = 0u32;
     let mut failed = 0u32;
-    for (id, path) in pending {
-        match analyze_one(&sidecar, &state, &id, &path).await {
-            Ok(true) => analyzed += 1,
-            Ok(false) => failed += 1,
-            Err(e) => {
-                // Infra failure (sidecar down / DB error): stop the batch but keep
-                // progress. Remaining rows stay 'pending' and are retried on re-run.
-                eprintln!("analyze_pending: stopping early after infra error: {e}");
-                break;
+    // why: an infra failure must be distinguishable from a user cancel — it
+    // surfaces as an Err (so the frontend shows it and skips grouping) and a
+    // distinct terminal status, not a silent "cancelled".
+    let mut infra_err: Option<AppError> = None;
+    while let Some(outcome) = stream.next().await {
+        match outcome {
+            Outcome::Ok => analyzed += 1,
+            Outcome::Failed => failed += 1,
+            Outcome::Skipped => {}
+            Outcome::Transport(e) => {
+                // Infra failure: stop feeding the rest of the batch (reuse the
+                // cancel flag purely as the stop signal). Remaining rows stay
+                // 'pending' (analyze_one never persisted them) and are retried on
+                // re-run. Keep the first error to report to the caller.
+                eprintln!("analyze_pending: stopping batch after infra error: {e}");
+                state.analysis_cancel.store(true, Ordering::Release);
+                if infra_err.is_none() {
+                    infra_err = Some(e);
+                }
             }
         }
     }
 
-    Ok(AnalyzeSummary { analyzed, failed })
+    // Terminal status: error > cancelled > done. An infra stop reports `error`
+    // even though it also set the stop flag, so it never masquerades as a cancel.
+    let user_cancelled = infra_err.is_none() && state.analysis_cancel.load(Ordering::Acquire);
+    let status = if infra_err.is_some() {
+        progress::STATUS_ERROR
+    } else if user_cancelled {
+        progress::STATUS_CANCELLED
+    } else {
+        progress::STATUS_DONE
+    };
+    progress::terminal(
+        &app,
+        progress::PHASE_ANALYZE,
+        done.load(Ordering::Acquire) as u32,
+        Some(total),
+        status,
+    );
+
+    // why: propagate an infra failure so the frontend surfaces it and does NOT
+    // proceed to grouping on partial data. Completed rows are already persisted,
+    // so a re-run resumes the still-`pending` remainder.
+    if let Some(e) = infra_err {
+        return Err(e);
+    }
+
+    Ok(AnalyzeSummary {
+        analyzed,
+        failed,
+        cancelled: user_cancelled,
+    })
+}
+
+/// Cooperatively cancel an in-progress analyze batch. Sets `analysis_cancel`;
+/// the dispatch loop stops starting new photos (they stay `pending`), in-flight
+/// analyses finish and persist. A no-op if nothing is running.
+#[tauri::command]
+pub fn cancel_analysis(state: State<'_, AppState>) {
+    state.analysis_cancel.store(true, Ordering::Release);
 }
 
 /// Analyze one photo and persist the outcome. Returns Ok(true) on a stored
@@ -124,18 +234,19 @@ pub async fn analyze_pending(state: State<'_, AppState>) -> Result<AnalyzeSummar
 /// retries it. A DB or join failure during persist also propagates as Err.
 ///
 /// D-conc replaceability: the whole "analyze one + persist" step lives here, so
-/// swapping the serial loop for a sidecar process pool later touches only the
-/// caller — not persistence or schema.
+/// the caller can drive it with bounded concurrency (see `analyze_pending`'s
+/// `buffer_unordered`) without touching persistence or schema.
 async fn analyze_one(
     sidecar: &crate::sidecar::Sidecar,
     state: &State<'_, AppState>,
     id: &str,
     path: &str,
 ) -> Result<bool, AppError> {
-    // C5 note: a slow op still head-of-line-blocks this single-threaded sidecar.
-    // The 30s CALL_TIMEOUT now surfaces as a transport Err here, which stops the
-    // batch cleanly (no false 'failed' cascade); the row stays 'pending'. A
-    // process-pool fix to remove HOL blocking is deferred to M1+.
+    // why: the sidecar transport is id-keyed and concurrency-safe, so the caller
+    // runs up to pool-size of these at once, each routed to a DISTINCT sidecar
+    // PROCESS (idx % n; no head-of-line blocking). A 30s CALL_TIMEOUT surfaces as a
+    // transport Err here, which stops the batch cleanly (no false 'failed'
+    // cascade); the row stays 'pending' and is retried on re-run.
     let result: Result<AnalysisResult, String> =
         match sidecar.call("analyze", json!({ "path": path })).await {
             // op succeeded: a malformed result for a valid op is a real per-file

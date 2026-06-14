@@ -323,3 +323,36 @@ M1 parent 集成验收：自动化全绿（Rust 61 tests / Python 25 tests / tsc
 ### Next Steps
 
 - 整图模糊把浅景深误判为模糊（bokeh backlog），后续独立任务处理。
+
+
+## Session 9: M2 分析多核并行 + 流水线进度条
+
+**Date**: 2026-06-15
+**Task**: M2 分析多核并行 + 流水线进度条
+**Branch**: `feat/analyze-perf-progress`
+
+### Summary
+
+分析从单进程串行改为 Rust N 进程 sidecar 池并行(N=min(cpu-1,4)),三阶段进度事件 + 顶部细长进度条 + 协作式取消。A 方案(进程内 Python 池)在 Windows+管道 stdio 下不可行(ProcessPool 死锁/ThreadPool EINVAL),改用 B 方案纯多进程。Rust70/Python28/对抗复核全绿,用户 GUI 实测多核生效。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0048696` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

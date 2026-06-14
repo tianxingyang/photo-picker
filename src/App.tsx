@@ -7,10 +7,12 @@ import { basename, exportKeep, scanFolder, type ExportFailure } from "./api/phot
 import { ABCompareViewer } from "./components/compare";
 import { GroupBrowseView } from "./components/browse";
 import { LandingView } from "./components/landing";
+import { PipelineProgressBar } from "./components/pipeline";
 import { clearDisplayCache } from "./hooks/useDisplaySrc";
 import { useGroupsStore } from "./store/groupsStore";
 import { usePhotosStore } from "./store/photosStore";
 import { useProjectsStore } from "./store/projectsStore";
+import { initProgressListener } from "./store/progressStore";
 import { useCompareStore } from "./store/compareStore";
 import { describeAppError } from "./types/ipc";
 import type { PhotoId } from "./types/photo";
@@ -31,6 +33,14 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [failures, setFailures] = useState<ExportFailure[]>([]);
+
+  // why: subscribe once to backend pipeline progress (import/analyze/group) so
+  // the thin top bar reflects live progress. Idempotent — App is the root and
+  // does not unmount, so a single module-level listener avoids duplicate
+  // subscriptions across project open/close.
+  useEffect(() => {
+    initProgressListener();
+  }, []);
 
   // why: hydrate the browse grid whenever a project opens — its photos
   // (persisted in SQLite, scoped to this project) show immediately, not only
@@ -91,7 +101,12 @@ export function App() {
     setFailures([]);
     setBusy(true);
     try {
-      await analyzePending();
+      const summary = await analyzePending();
+      // why: a user cancel leaves photos pending — don't auto-group partial data.
+      if (summary.cancelled) {
+        setNotice("分析已取消，未进行分组");
+        return;
+      }
       await groupPhotos();
       await loadGroups();
     } catch (e) {
@@ -169,6 +184,8 @@ export function App() {
         </button>
         <span className="text-xs text-muted-foreground">已导入 {importedCount} 张</span>
       </header>
+      {/* Thin top loading bar — live import/analyze/group progress (non-blocking). */}
+      <PipelineProgressBar />
       {error !== null && (
         <div
           role="alert"

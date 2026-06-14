@@ -14,10 +14,26 @@ use tokio::sync::Mutex;
 
 use crate::sidecar::Sidecar;
 
+/// Upper bound on sidecar processes. Each is a single-threaded synchronous
+/// Python (`uv run python main.py`) that loads numpy/PIL/pillow_heif (~50-100MB
+/// each), so we cap the pool to bound memory while still giving real multicore
+/// analysis. Actual size = min(cpu-1, this).
+const MAX_SIDECARS: usize = 4;
+
+/// Number of sidecar processes to spawn: `cpu-1` clamped to `[1, MAX_SIDECARS]`.
+pub fn sidecar_pool_size() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get().saturating_sub(1).clamp(1, MAX_SIDECARS))
+        .unwrap_or(1)
+}
+
 pub struct AppState {
-    // why: Arc lets command handlers clone-and-release the outer lock instantly
-    // so concurrent RPCs aren't serialized behind a single in-flight call.
-    pub sidecar: Mutex<Option<Arc<Sidecar>>>,
+    // why: a POOL of identical sidecar processes. Each Python sidecar is
+    // single-threaded + synchronous — the only model stable under piped stdio on
+    // Windows (in-process threads deadlock/EINVAL there). Parallelism comes from
+    // running several and spreading `analyze` across them (see analyze_pending).
+    // transcode/echo use the first. Empty until the boot task fills it.
+    pub sidecars: Mutex<Vec<Arc<Sidecar>>>,
     // why: Arc<tokio::Mutex> so a command can clone the handle, release the outer
     // ref, then `blocking_lock()` the Connection inside spawn_blocking — keeping
     // rusqlite's blocking work off the tokio worker without holding it across .await.
@@ -30,6 +46,11 @@ pub struct AppState {
     // why: single-flight guard so two concurrent analyze_pending invocations
     // don't both pick up the same pending rows and double-process them.
     pub analysis_running: AtomicBool,
+    // why: cooperative cancel for an in-progress analyze batch. Set by
+    // cancel_analysis (or on an infra error); the bounded-concurrency dispatch
+    // checks it before starting each photo and stops feeding new work — in-flight
+    // analyses finish, remaining rows stay 'pending'. Reset at each batch start.
+    pub analysis_cancel: AtomicBool,
     // why: single-flight guard so two concurrent group_photos invocations
     // don't both re-cluster and race the delete-then-reinsert transaction.
     pub grouping_running: AtomicBool,
@@ -44,24 +65,34 @@ pub fn run() {
             db::run_migrations(&conn).map_err(boxed)?;
 
             app.manage(AppState {
-                sidecar: Mutex::new(None),
+                sidecars: Mutex::new(Vec::new()),
                 db: Arc::new(Mutex::new(conn)),
                 current_project: std::sync::Mutex::new(None),
                 analysis_running: AtomicBool::new(false),
+                analysis_cancel: AtomicBool::new(false),
                 grouping_running: AtomicBool::new(false),
             });
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let sidecar = match Sidecar::spawn_dev().await {
-                    Ok(s) => Some(Arc::new(s)),
-                    Err(e) => {
-                        eprintln!("sidecar spawn failed: {e}");
-                        None
-                    }
-                };
+                // Spawn the sidecar pool concurrently (each `uv run` startup is
+                // slow); keep whichever processes came up.
+                let n = sidecar_pool_size();
+                let spawned =
+                    futures::future::join_all((0..n).map(|_| Sidecar::spawn_dev())).await;
+                let pool: Vec<Arc<Sidecar>> = spawned
+                    .into_iter()
+                    .filter_map(|r| match r {
+                        Ok(s) => Some(Arc::new(s)),
+                        Err(e) => {
+                            eprintln!("sidecar spawn failed: {e}");
+                            None
+                        }
+                    })
+                    .collect();
+                eprintln!("sidecar pool ready: {} process(es)", pool.len());
                 let state = handle.state::<AppState>();
-                *state.sidecar.lock().await = sidecar;
+                *state.sidecars.lock().await = pool;
             });
 
             Ok(())
@@ -78,6 +109,7 @@ pub fn run() {
             commands::photos::export_keep,
             commands::photos::transcode_for_display,
             commands::analysis::analyze_pending,
+            commands::analysis::cancel_analysis,
             commands::grouping::group_photos,
             commands::grouping::list_groups
         ])

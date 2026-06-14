@@ -37,17 +37,30 @@ pub struct ScanOutcome {
 /// count of unreadable entries. The photo id is `blake3(project_id + '\n' +
 /// path)`, so the same path scanned into two projects yields two independent
 /// rows.
+///
+/// `on_progress(done, total)` reports import progress: during the walk
+/// `total = None` (indeterminate, `done` = files discovered so far); during the
+/// upsert `total = Some(matched_count)` (determinate). It is a decoupling seam —
+/// the command passes a closure that emits the Tauri progress event, while the
+/// scanner stays free of any UI dependency. Throttled so a huge tree doesn't
+/// flood: every ~200 files while walking, every ~50 while inserting.
 pub fn scan_folder(
     conn: &Connection,
     project_id: &str,
     root: &Path,
+    on_progress: &dyn Fn(u32, Option<u32>),
 ) -> Result<ScanOutcome, ScanErr> {
     let mut matched: Vec<String> = Vec::new();
     let mut skipped: u32 = 0;
+    let mut discovered: u32 = 0;
     for entry in WalkDir::new(root) {
         match entry {
             Ok(e) if e.file_type().is_file() && is_supported(e.path()) => {
                 matched.push(e.path().to_string_lossy().into_owned());
+                discovered += 1;
+                if discovered.is_multiple_of(200) {
+                    on_progress(discovered, None);
+                }
             }
             Ok(_) => {}
             // why: a denied/unreadable subtree must not silently vanish from the
@@ -59,6 +72,7 @@ pub fn scan_folder(
         }
     }
 
+    let total = matched.len() as u32;
     let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
     let tx = conn.unchecked_transaction()?;
     let mut rows = Vec::with_capacity(matched.len());
@@ -69,6 +83,7 @@ pub fn scan_folder(
         )?;
         let mut select =
             tx.prepare_cached("SELECT status, created_at FROM photos WHERE id = ?1")?;
+        let mut indexed: u32 = 0;
         for path in matched {
             let id = photo_id(project_id, &path);
             insert.execute(params![id, project_id, path, now])?;
@@ -80,6 +95,10 @@ pub fn scan_folder(
                 status,
                 created_at,
             });
+            indexed += 1;
+            if indexed.is_multiple_of(50) || indexed == total {
+                on_progress(indexed, Some(total));
+            }
         }
     }
     tx.commit()?;
@@ -144,7 +163,7 @@ mod tests {
         fs::write(root.join("sub").join("d.jpeg"), b"x").unwrap();
 
         let conn = mem_conn();
-        let outcome = scan_folder(&conn, PROJ, root).unwrap();
+        let outcome = scan_folder(&conn, PROJ, root, &|_, _| {}).unwrap();
 
         assert_eq!(
             outcome.photos.len(),
@@ -161,8 +180,8 @@ mod tests {
         fs::write(dir.path().join("a.jpg"), b"x").unwrap();
         let conn = mem_conn();
 
-        let first = scan_folder(&conn, PROJ, dir.path()).unwrap();
-        let second = scan_folder(&conn, PROJ, dir.path()).unwrap();
+        let first = scan_folder(&conn, PROJ, dir.path(), &|_, _| {}).unwrap();
+        let second = scan_folder(&conn, PROJ, dir.path(), &|_, _| {}).unwrap();
 
         assert_eq!(first.photos.len(), 1);
         assert_eq!(second.photos.len(), 1);
@@ -179,7 +198,7 @@ mod tests {
         fs::write(&f, b"x").unwrap();
         let conn = mem_conn();
 
-        let outcome = scan_folder(&conn, PROJ, dir.path()).unwrap();
+        let outcome = scan_folder(&conn, PROJ, dir.path(), &|_, _| {}).unwrap();
         let id = &outcome.photos[0].id;
 
         assert_eq!(id.len(), 64);
@@ -203,8 +222,8 @@ mod tests {
         )
         .unwrap();
 
-        let a = scan_folder(&conn, PROJ, dir.path()).unwrap();
-        let b = scan_folder(&conn, "other", dir.path()).unwrap();
+        let a = scan_folder(&conn, PROJ, dir.path(), &|_, _| {}).unwrap();
+        let b = scan_folder(&conn, "other", dir.path(), &|_, _| {}).unwrap();
 
         assert_ne!(
             a.photos[0].id, b.photos[0].id,
@@ -230,7 +249,7 @@ mod tests {
         )
         .unwrap();
 
-        let outcome = scan_folder(&conn, PROJ, dir.path()).unwrap();
+        let outcome = scan_folder(&conn, PROJ, dir.path(), &|_, _| {}).unwrap();
 
         assert_eq!(outcome.photos.len(), 1);
         assert_eq!(
