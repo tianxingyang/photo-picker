@@ -70,7 +70,18 @@ SQLite via `rusqlite` (bundled). WAL mode. File location: `<app_data_dir>/photo-
 > - **Scoping contract**: the open project's id lives in `AppState.current_project: std::sync::Mutex<Option<String>>`, read via the `commands::current_project()` helper (returns `AppError::Validation("no project open")` when none is open — see `error-handling.md`). Every photo-scoped command (`scan_folder`, `export_keep`, `analyze_pending`, `group_photos`, `list_groups`) reads it before `spawn_blocking` and threads it into the query (`WHERE project_id = ?`) or the scanner / `regroup`. The id is cloned out before the blocking closure — the lock is never held across `.await`.
 > - **Single-flight guards stay global**: `analysis_running` / `grouping_running` are NOT per-project. One project is open at a time, so they cannot leak across the boundary — correctness comes from the single-open invariant, not per-project flags.
 
-Related OPEN items (deferred to feature tasks): status column encoding (TEXT vs INT), thumbnail resolution tiers.
+### Thumbnail pre-generation — RESOLVED (M2: `thumb_status` + mtime self-heal)
+
+> **DECIDED 2026-06-15** (task `06-15-thumbnail-pregen`, `user_version` → 5, migration `0005_thumbnails.sql`). Background batch pre-generation of **single-tier 512px WebP@q80** thumbnails, auto-chained after scan (`scan → thumbnails → analyze` in `App.tsx onImport`), so the grid/compare-filmstrip stop decoding full-resolution originals.
+>
+> - **Schema (additive, mirrors `analysis_state`)**: `photos.thumb_status TEXT NOT NULL DEFAULT 'pending' CHECK IN ('pending','done','failed')`, `thumb_src_mtime INTEGER` (source mtime in nanos at generation time; NULL until generated), `thumb_error TEXT`, plus `idx_photos_thumb_status`. No `thumb_path` column — the path is **derived** from the id (`db::thumb_dest`), not stored.
+> - **Cache layout**: `<app_data_dir>/thumbnails/<id[0:2]>/<id>.webp` (two-level fan-out; id is already project-unique). Overwrite-**in-place** on regen — no mtime in the filename, so no orphan files.
+> - **Self-heal lives in `generate_thumbnails`, NOT the scanner** (the scanner is `INSERT OR IGNORE` — it never updates existing rows or records mtime). Each run does a stat-filter pass: regenerate when `thumb_status='pending'`, or `done` with a missing file / changed source mtime, or `failed` with a changed source mtime. **Failures record `thumb_src_mtime` too** (in `persist_thumb`), otherwise a genuinely-corrupt file (mtime never matches `None`) is re-encoded on every run.
+> - **Independent single-flight/cancel flags**: `thumbnails_running` / `thumbnails_cancel` AtomicBools — NEVER reuse `analysis_*` (a shared flag would let cancelling one batch kill the other). Mutually exclusive with analyze on the shared N-sidecar pool because `onImport` awaits thumbnails before the user can trigger analyze.
+> - **Frontend repaint**: the thumbnail URL is `convertFileSrc(path) + "?v=" + thumb_src_mtime` — the `?v=` cache-buster (appended to the ASSET URL, not the path) makes a self-healed (in-place-overwritten) thumbnail actually repaint; the asset protocol ignores the query when resolving the file.
+> - **Lifecycle**: `delete_project` collects photo ids before the cascade and removes each `<id>.webp` best-effort (the FK cascade only drops DB rows). Frontend `ThumbImage` degrades thumb → original (non-HEIC) → HEIC placeholder via `<img onError>`.
+
+Related OPEN items (deferred to feature tasks): status column encoding (TEXT vs INT).
 
 ---
 

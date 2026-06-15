@@ -54,6 +54,13 @@ pub struct AppState {
     // why: single-flight guard so two concurrent group_photos invocations
     // don't both re-cluster and race the delete-then-reinsert transaction.
     pub grouping_running: AtomicBool,
+    // why: single-flight guard for generate_thumbnails — independent of analysis
+    // so a thumbnail batch and an analyze batch never share a running/cancel
+    // flag (a shared flag would let cancelling one kill the other).
+    pub thumbnails_running: AtomicBool,
+    // why: cooperative cancel for an in-progress thumbnail batch. Mirror of
+    // analysis_cancel but a separate flag — see thumbnails_running.
+    pub thumbnails_cancel: AtomicBool,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -71,6 +78,8 @@ pub fn run() {
                 analysis_running: AtomicBool::new(false),
                 analysis_cancel: AtomicBool::new(false),
                 grouping_running: AtomicBool::new(false),
+                thumbnails_running: AtomicBool::new(false),
+                thumbnails_cancel: AtomicBool::new(false),
             });
 
             let handle = app.handle().clone();
@@ -110,6 +119,8 @@ pub fn run() {
             commands::photos::transcode_for_display,
             commands::analysis::analyze_pending,
             commands::analysis::cancel_analysis,
+            commands::thumbnails::generate_thumbnails,
+            commands::thumbnails::cancel_thumbnails,
             commands::grouping::group_photos,
             commands::grouping::list_groups
         ])

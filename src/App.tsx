@@ -4,6 +4,7 @@ import { analyzePending } from "./api/analysisApi";
 import { pickFolder } from "./api/dialogApi";
 import { groupPhotos } from "./api/groupsApi";
 import { basename, exportKeep, scanFolder, type ExportFailure } from "./api/photosApi";
+import { generateThumbnails } from "./api/thumbnailsApi";
 import { ABCompareViewer } from "./components/compare";
 import { GroupBrowseView } from "./components/browse";
 import { LandingView } from "./components/landing";
@@ -86,6 +87,17 @@ export function App() {
       // analysis/grouping then just reshuffles them into similar groups.
       await loadGroups();
       if (skipped > 0) setNotice(`${skipped} 项无法读取，已跳过`);
+      // why: scan -> thumbnails auto-chain. The grid already shows originals
+      // above; now pre-generate 512px WebP thumbnails and refresh so tiles swap
+      // to the cheap thumbnails. Awaited (keeps `busy`) so it can't overlap an
+      // analyze batch on the shared sidecar pool. Best-effort: a thumbnail
+      // failure must not fail the import — the grid keeps showing originals.
+      try {
+        const t = await generateThumbnails();
+        if (t.generated > 0) await loadGroups();
+      } catch (e) {
+        if (import.meta.env.DEV) console.debug("generateThumbnails failed", e);
+      }
     } catch (e) {
       const { kind, message } = describeAppError(e);
       setError(kind === "NotFound" ? `目录无效：${message}` : `导入失败：${message}`);

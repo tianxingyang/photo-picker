@@ -1,6 +1,6 @@
 import { useRef } from "react";
 
-import { HeicPlaceholder } from "../browse/HeicPlaceholder";
+import { ThumbImage } from "../browse/ThumbImage";
 import { ArrowLeftRightIcon } from "../browse/icons";
 import { useGroupsStore } from "../../store/groupsStore";
 import { useCompareStore } from "../../store/compareStore";
@@ -33,17 +33,7 @@ function Thumbnail({ id, isA, isB, onClick }: ThumbnailProps) {
       aria-label={`选择 ${photo.name} 为 ${isB ? "B" : "对比图"}`}
       aria-pressed={isA || isB}
     >
-      {photo.isHeic ? (
-        <HeicPlaceholder name={photo.name} />
-      ) : (
-        <img
-          src={photo.src}
-          alt={photo.name}
-          loading="lazy"
-          decoding="async"
-          className="h-full w-full object-cover"
-        />
-      )}
+      <ThumbImage photo={photo} />
 
       {/* Corner badge: A or B — uses text + position, not color alone */}
       {badge !== null && (

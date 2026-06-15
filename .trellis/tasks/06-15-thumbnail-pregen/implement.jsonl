@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "迁移 0005 规则：前向只增 ADD COLUMN、user_version 与 MIGRATIONS.len() 锁步、宽表约定；含 deferred 的『thumbnail resolution tiers』OPEN item（本任务已定单档 512px）"}
+{"file": ".trellis/spec/backend/analyzer-guidelines.md", "reason": "新增 sidecar `thumbnail` op（克隆 transcode.py）需遵循 analyzer/IPC 约定与按文件错误 raise 的两级契约"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "确认 generate_thumbnails 命令、db helper、migrations 的落位与现有 commands/db/scanner 模块一致"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError 与 sidecar call() transport-vs-per-file 两级错误处理，thumb 失败写 thumb_error 需对齐"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "BrowsePhoto 增 thumbSrc、branded PhotoSrc、Rust↔TS 边界校验约定"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "PhotoCard / CompareFilmstrip 改用 thumbSrc + onError 回退、HEIC 分支调整"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "progressStore（zustand）新增 thumbnail phase 到 PHASES + ProgressPhase，否则事件被 isProgress 静默丢弃"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "convertFileSrc/invoke 限于 api/ 层；新增 thumbnailsApi.ts、groupsApi 投影 thumbSrc 须守此边界"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "thumb_status/thumb_path 自 DB→Rust DTO→TS 的跨层数据流一致性"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 analyze_pending/transcode/transcode_for_display 既有模式而非新造"}

@@ -3,6 +3,7 @@ pub mod grouping;
 pub mod photos;
 pub mod progress;
 pub mod projects;
+pub mod thumbnails;
 
 use std::sync::Arc;
 

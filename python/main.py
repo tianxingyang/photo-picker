@@ -11,12 +11,13 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from analyzers import analyze, echo, transcode
+from analyzers import analyze, echo, thumbnail, transcode
 
 OPS: dict[str, Callable[[dict], dict]] = {
     "echo": echo.run,
     "analyze": analyze.run,
     "transcode": transcode.run,
+    "thumbnail": thumbnail.run,
 }
 
 

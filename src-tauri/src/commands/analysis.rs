@@ -324,6 +324,7 @@ mod tests {
             include_str!("../../migrations/0002_analysis.sql"),
             include_str!("../../migrations/0003_grouping.sql"),
             include_str!("../../migrations/0004_projects.sql"),
+            include_str!("../../migrations/0005_thumbnails.sql"),
         ] {
             conn.execute_batch(sql).unwrap();
         }

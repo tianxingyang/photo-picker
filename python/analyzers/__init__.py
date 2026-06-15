@@ -1,3 +1,3 @@
-from . import analyze, echo, transcode
+from . import analyze, echo, thumbnail, transcode
 
-__all__ = ["analyze", "echo", "transcode"]
+__all__ = ["analyze", "echo", "thumbnail", "transcode"]

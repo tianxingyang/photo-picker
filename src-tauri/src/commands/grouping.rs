@@ -193,6 +193,15 @@ pub struct BrowsePhoto {
     pub blur_score: Option<f64>,
     pub exposure_flag: Option<String>,
     pub analysis_state: String,
+    pub thumb_status: String,
+    // why: absolute path to the generated WebP when `thumb_status='done'`, else
+    // None. Derived from the photo id (the frontend can't reach app_data_dir, so
+    // the backend resolves it) in `fill_thumb_paths` after the DB read.
+    pub thumb_path: Option<String>,
+    // why: the source mtime the thumbnail was generated against. The frontend
+    // appends it as a `?v=` cache-buster on the (stable, in-place-overwritten)
+    // thumbnail URL so a self-healed thumbnail actually repaints (AC7).
+    pub thumb_src_mtime: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -213,22 +222,54 @@ pub struct BrowseModel {
 /// (sorted by capture time, sharpest first as tiebreak) plus the ungrouped
 /// bucket (singletons + not-yet-analysed + failed — anything not in a group).
 #[tauri::command]
-pub async fn list_groups(state: State<'_, AppState>) -> Result<BrowseModel, AppError> {
+pub async fn list_groups(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<BrowseModel, AppError> {
     // Browse only the open project's photos and groups.
     let project_id = current_project(&state)?;
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<BrowseModel> {
+    let mut model = tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<BrowseModel> {
         let conn = db.blocking_lock();
         load_browse_model(&conn, &project_id)
     })
     .await
     .map_err(|e| AppError::Io(e.to_string()))?
-    .map_err(|e| AppError::Db(e.to_string()))
+    .map_err(|e| AppError::Db(e.to_string()))?;
+
+    // why: resolve each ready thumbnail's absolute path here (needs the AppHandle
+    // for app_data_dir, which the spawn_blocking DB closure doesn't have).
+    let thumbs_dir = crate::db::thumbnails_dir(&app).map_err(|e| AppError::Io(e.to_string()))?;
+    fill_thumb_paths(&mut model, &thumbs_dir);
+    Ok(model)
 }
 
-/// Read 8 photo columns into a `BrowsePhoto`, starting at column `base`. The
+/// Fill `thumb_path` on every photo whose thumbnail is ready (`thumb_status =
+/// 'done'`), deriving the absolute WebP path from the photo id. Photos without a
+/// ready thumbnail keep `thumb_path: None`, and the frontend falls back to the
+/// full-resolution original.
+fn fill_thumb_paths(model: &mut BrowseModel, thumbs_dir: &std::path::Path) {
+    fn set(p: &mut BrowsePhoto, thumbs_dir: &std::path::Path) {
+        if p.thumb_status == "done" {
+            let dest = crate::db::thumb_dest(thumbs_dir, &p.id);
+            p.thumb_path = Some(dest.to_string_lossy().into_owned());
+        }
+    }
+    for g in &mut model.groups {
+        for p in &mut g.photos {
+            set(p, thumbs_dir);
+        }
+    }
+    for p in &mut model.ungrouped {
+        set(p, thumbs_dir);
+    }
+}
+
+/// Read 10 photo columns into a `BrowsePhoto`, starting at column `base`. The
 /// SELECT column order below is the contract: id, path, status, shot_at,
-/// is_blurry, blur_score, exposure_flag, analysis_state.
+/// is_blurry, blur_score, exposure_flag, analysis_state, thumb_status,
+/// thumb_src_mtime. `thumb_path` is left None here and resolved later in
+/// `fill_thumb_paths`.
 fn read_photo(r: &rusqlite::Row, base: usize) -> rusqlite::Result<BrowsePhoto> {
     let is_blurry: Option<i64> = r.get(base + 4)?;
     Ok(BrowsePhoto {
@@ -240,6 +281,9 @@ fn read_photo(r: &rusqlite::Row, base: usize) -> rusqlite::Result<BrowsePhoto> {
         blur_score: r.get(base + 5)?,
         exposure_flag: r.get(base + 6)?,
         analysis_state: r.get(base + 7)?,
+        thumb_status: r.get(base + 8)?,
+        thumb_path: None,
+        thumb_src_mtime: r.get(base + 9)?,
     })
 }
 
@@ -287,7 +331,8 @@ fn load_browse_model(conn: &Connection, project_id: &str) -> rusqlite::Result<Br
     {
         let mut stmt = conn.prepare_cached(
             "SELECT gm.group_id, p.id, p.path, p.status, p.shot_at, p.is_blurry, \
-             p.blur_score, p.exposure_flag, p.analysis_state \
+             p.blur_score, p.exposure_flag, p.analysis_state, p.thumb_status, \
+             p.thumb_src_mtime \
              FROM group_members gm \
              JOIN photos p ON p.id = gm.photo_id \
              JOIN similar_groups sg ON sg.id = gm.group_id \
@@ -321,7 +366,7 @@ fn load_browse_model(conn: &Connection, project_id: &str) -> rusqlite::Result<Br
     let ungrouped = {
         let mut stmt = conn.prepare_cached(
             "SELECT p.id, p.path, p.status, p.shot_at, p.is_blurry, p.blur_score, \
-             p.exposure_flag, p.analysis_state \
+             p.exposure_flag, p.analysis_state, p.thumb_status, p.thumb_src_mtime \
              FROM photos p \
              WHERE p.project_id = ?2 AND NOT EXISTS ( \
                  SELECT 1 FROM group_members gm \
@@ -353,6 +398,7 @@ mod tests {
             include_str!("../../migrations/0002_analysis.sql"),
             include_str!("../../migrations/0003_grouping.sql"),
             include_str!("../../migrations/0004_projects.sql"),
+            include_str!("../../migrations/0005_thumbnails.sql"),
         ] {
             conn.execute_batch(sql).unwrap();
         }

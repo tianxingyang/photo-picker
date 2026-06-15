@@ -5,3 +5,9 @@ import { invoke } from "@tauri-apps/api/core";
 export async function cancelAnalysis(): Promise<void> {
   await invoke("cancel_analysis");
 }
+
+/** Cooperatively cancel an in-progress thumbnail batch (Rust `cancel_thumbnails`).
+ *  Already-generated thumbnails persist; the rest are picked up on the next run. */
+export async function cancelThumbnails(): Promise<void> {
+  await invoke("cancel_thumbnails");
+}

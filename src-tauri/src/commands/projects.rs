@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection};
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -122,26 +122,44 @@ pub async fn close_project(state: State<'_, AppState>) -> Result<(), AppError> {
 /// Delete a project and all of its photos / groups (cascade via the FKs). If the
 /// deleted project happens to be the current one, also clear it so no command
 /// keeps operating on a vanished project. External export copies on disk are not
-/// touched (PRD R6).
+/// touched (PRD R6); the project's WebP thumbnail cache IS purged (the FK cascade
+/// only removes DB rows, not the on-disk thumbnail files).
 #[tauri::command]
 pub async fn delete_project(
+    app: AppHandle,
     project_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let db = state.db.clone();
     let id = project_id.clone();
-    let deleted = tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<usize> {
-        let conn = db.blocking_lock();
-        delete_project_db(&conn, &id)
-    })
-    .await
-    .map_err(|e| AppError::Io(e.to_string()))?
-    .map_err(|e| AppError::Db(e.to_string()))?;
+    // why: collect the project's photo ids BEFORE the cascade removes the rows,
+    // so the on-disk thumbnails can be purged afterward (same blocking closure to
+    // keep it one DB lock).
+    let (deleted, photo_ids) =
+        tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<(usize, Vec<String>)> {
+            let conn = db.blocking_lock();
+            let ids = select_photo_ids(&conn, &id)?;
+            let deleted = delete_project_db(&conn, &id)?;
+            Ok((deleted, ids))
+        })
+        .await
+        .map_err(|e| AppError::Io(e.to_string()))?
+        .map_err(|e| AppError::Db(e.to_string()))?;
 
     if deleted == 0 {
         return Err(AppError::NotFound(format!(
             "no project with id: {project_id}"
         )));
+    }
+
+    // why: the FK cascade dropped the photo rows but not their thumbnail files —
+    // purge them best-effort so app_data_dir doesn't accumulate a deleted
+    // project's cache. A remove failure (already gone, never generated) must not
+    // fail the already-committed delete.
+    if let Ok(thumbs_dir) = crate::db::thumbnails_dir(&app) {
+        for id in &photo_ids {
+            let _ = std::fs::remove_file(crate::db::thumb_dest(&thumbs_dir, id));
+        }
     }
 
     // why: if we just deleted the open project, drop the dangling current id so
@@ -199,6 +217,14 @@ fn delete_project_db(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     conn.execute("DELETE FROM projects WHERE id = ?1", params![id])
 }
 
+/// The project's photo ids — read before a cascade delete so the caller can
+/// purge each photo's on-disk thumbnail.
+fn select_photo_ids(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare_cached("SELECT id FROM photos WHERE project_id = ?1")?;
+    let rows = stmt.query_map(params![project_id], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +237,7 @@ mod tests {
             include_str!("../../migrations/0002_analysis.sql"),
             include_str!("../../migrations/0003_grouping.sql"),
             include_str!("../../migrations/0004_projects.sql"),
+            include_str!("../../migrations/0005_thumbnails.sql"),
         ] {
             conn.execute_batch(sql).unwrap();
         }
@@ -286,6 +313,19 @@ mod tests {
         let conn = mem_conn();
         let n = delete_project_db(&conn, "nope").unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn select_photo_ids_returns_only_project_rows() {
+        let conn = mem_conn();
+        insert_project(&conn, "p1", "A", "2026-01-01T00:00:00Z").unwrap();
+        insert_project(&conn, "p2", "B", "2026-01-01T00:00:00Z").unwrap();
+        add_photo(&conn, "a", "p1");
+        add_photo(&conn, "b", "p1");
+        add_photo(&conn, "c", "p2");
+        let mut ids = select_photo_ids(&conn, "p1").unwrap();
+        ids.sort();
+        assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
     }
 
     #[test]

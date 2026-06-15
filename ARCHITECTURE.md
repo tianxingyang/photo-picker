@@ -155,12 +155,18 @@ JSON-Lines over stdio，每行一个 JSON 对象。
 ```
 
 `id` 由 Rust 单调递增，用于多路复用。`op` 当前枚举：`analyze`（Python 端解码一次，依次调
-`blur` / `exposure` / `phash` / `exif` 四个内部 module 合并结果），后续可扩展 `embed` / `face`。
+`blur` / `exposure` / `phash` / `exif` 四个内部 module 合并结果）、`transcode`（HEIC→显示用
+JPEG，按需）、`thumbnail`（解码→`exif_transpose`→缩放至 512px 最长边→WebP 落盘，批量预生成），
+后续可扩展 `embed` / `face`。
 
 ## 存储位置
 
 - 数据库：`<app_data_dir>/photo-picker.db`（WAL 模式）。
-- 缩略图缓存：`<app_data_dir>/thumbnails/<id[0:2]>/<id>.webp`，两级目录避免单目录文件爆炸。
+- 缩略图缓存：`<app_data_dir>/thumbnails/<id[0:2]>/<id>.webp`，两级目录避免单目录文件爆炸。文件名
+  不含 mtime、自愈走 DB 列：`photos.thumb_status`（pending/done/failed）+ `thumb_src_mtime`（生成时
+  源文件 mtime，nanos）。`generate_thumbnails` 每轮 stat 源文件，mtime 变化或文件缺失即就地覆写重生成
+  （扫描器是 `INSERT OR IGNORE`、不记 mtime，故自愈只能在生成阶段做）。前端用 `?v=<thumb_src_mtime>`
+  作为 asset URL 的 cache-buster，确保就地覆写后能重绘（AC7）。删除项目时按 photo id 清理对应缩略图文件。
 - 用户原片：应用内部**绝不复制、绝不移动、绝不修改**（缩略图/分析都不把原片复制入库），全程只读路径引用。唯一例外是用户主动发起的「导出精选」——把 `status='keep'` 的原片**只读拷贝**到用户自选目录，源文件零改动（见上「数据流：导出精选」）。
 
 ## 关键设计决策（待用户确认）

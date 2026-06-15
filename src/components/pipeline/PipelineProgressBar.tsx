@@ -1,5 +1,5 @@
 import { useProgressStore, type Progress } from "../../store/progressStore";
-import { cancelAnalysis } from "../../api/pipelineApi";
+import { cancelAnalysis, cancelThumbnails } from "../../api/pipelineApi";
 
 /** Compact, non-blocking pipeline progress: a thin top loading bar under the
  *  header. Determinate (width = done/total) when `total` is known; an
@@ -16,7 +16,8 @@ export function PipelineProgressBar() {
   const determinate = total !== null && total > 0;
   const pct = determinate ? Math.min(100, Math.round((done / total) * 100)) : null;
   const label = phaseLabel(current);
-  const canCancel = phase === "analyze" && status === "running";
+  // Both the thumbnail and analyze batches are cooperatively cancellable.
+  const canCancel = (phase === "analyze" || phase === "thumbnail") && status === "running";
   // why: a terminal tick (done/cancelled/error) must NOT keep the "still working"
   // sliding animation — even when total is unknown (group, or an empty batch).
   const fill = errored ? "bg-reject" : "bg-primary";
@@ -52,7 +53,7 @@ export function PipelineProgressBar() {
       {canCancel && (
         <button
           type="button"
-          onClick={() => void cancelAnalysis()}
+          onClick={() => void (phase === "thumbnail" ? cancelThumbnails() : cancelAnalysis())}
           className="shrink-0 rounded-md px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-reject focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         >
           取消
@@ -67,6 +68,8 @@ function phaseLabel({ phase, done, total, status }: Progress): string {
   switch (phase) {
     case "import":
       return total !== null ? `导入 ${done}/${total}` : `导入 ${done}`;
+    case "thumbnail":
+      return total !== null ? `生成缩略图 ${done}/${total}` : `生成缩略图 ${done}`;
     case "analyze":
       return total !== null ? `分析 ${done}/${total}` : `分析 ${done}`;
     case "group":
@@ -83,6 +86,8 @@ function phaseNoun(phase: Progress["phase"]): string {
   switch (phase) {
     case "import":
       return "导入";
+    case "thumbnail":
+      return "生成缩略图";
     case "analyze":
       return "分析";
     case "group":

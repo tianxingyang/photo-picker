@@ -16,6 +16,8 @@ export type Photo = {
 
 export type ExposureFlag = "normal" | "over" | "under";
 export type AnalysisState = "pending" | "done" | "failed";
+// Thumbnail generation lifecycle — same domain as AnalysisState.
+export type ThumbStatus = "pending" | "done" | "failed";
 
 // Photo enriched with analysis fields for the group-browse view. Mirrors the
 // Rust `BrowsePhoto` DTO (commands/grouping.rs); validated/derived in api/.
@@ -30,4 +32,8 @@ export type BrowsePhoto = {
   isBlurry: boolean | null;
   exposureFlag: ExposureFlag | null;
   analysisState: AnalysisState;
+  thumbStatus: ThumbStatus;
+  // Pre-generated 512px WebP thumbnail (preferred over `src` in grid/filmstrip);
+  // null until the thumbnail is generated. Derived from the backend thumb path.
+  thumbSrc: PhotoSrc | null;
 };
