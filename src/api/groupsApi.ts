@@ -8,6 +8,7 @@ import type {
   PhotoId,
   PhotoSrc,
   PhotoStatus,
+  ThumbStatus,
 } from "../types/photo";
 
 // Raw row from Rust `list_groups` (serde camelCase). Validated at the boundary
@@ -21,11 +22,17 @@ type BrowsePhotoRaw = {
   blurScore: number | null;
   exposureFlag: string | null;
   analysisState: string;
+  thumbStatus: string;
+  // Absolute thumbnail path when ready (thumbStatus==='done'), else null.
+  thumbPath: string | null;
+  // Source mtime the thumbnail was generated against; used as a ?v= cache-buster.
+  thumbSrcMtime: number | null;
 };
 
 const STATUSES: readonly string[] = ["pending", "keep", "reject"];
 const EXPOSURES: readonly string[] = ["normal", "over", "under"];
 const ANALYSIS_STATES: readonly string[] = ["pending", "done", "failed"];
+const THUMB_STATES: readonly string[] = ["pending", "done", "failed"];
 
 function isStringOrNull(v: unknown): v is string | null {
   return v === null || typeof v === "string";
@@ -42,7 +49,10 @@ function isBrowsePhotoRaw(v: unknown): v is BrowsePhotoRaw {
     (o.isBlurry === null || typeof o.isBlurry === "boolean") &&
     (o.blurScore === null || typeof o.blurScore === "number") &&
     isStringOrNull(o.exposureFlag) &&
-    typeof o.analysisState === "string"
+    typeof o.analysisState === "string" &&
+    typeof o.thumbStatus === "string" &&
+    isStringOrNull(o.thumbPath) &&
+    (o.thumbSrcMtime === null || typeof o.thumbSrcMtime === "number")
   );
 }
 
@@ -64,6 +74,9 @@ function toBrowsePhoto(raw: BrowsePhotoRaw): BrowsePhoto {
   const analysisState: AnalysisState = ANALYSIS_STATES.includes(raw.analysisState)
     ? (raw.analysisState as AnalysisState)
     : "pending";
+  const thumbStatus: ThumbStatus = THUMB_STATES.includes(raw.thumbStatus)
+    ? (raw.thumbStatus as ThumbStatus)
+    : "pending";
   return {
     id: raw.id as PhotoId,
     name,
@@ -75,6 +88,16 @@ function toBrowsePhoto(raw: BrowsePhotoRaw): BrowsePhoto {
     isBlurry: raw.isBlurry,
     exposureFlag,
     analysisState,
+    thumbStatus,
+    // why: wrap the backend path with convertFileSrc (the api/ boundary owns the
+    // path→asset-url conversion, like `src`), then append the source mtime as a
+    // ?v= cache-buster ON THE ASSET URL (not the path, which convertFileSrc would
+    // percent-encode). The thumbnail file is overwritten in place on self-heal, so
+    // without a changing query string the webview would keep showing the stale
+    // image (AC7). The asset protocol ignores the query when resolving the file.
+    thumbSrc: raw.thumbPath
+      ? (`${convertFileSrc(raw.thumbPath)}?v=${raw.thumbSrcMtime ?? 0}` as PhotoSrc)
+      : null,
   };
 }
 

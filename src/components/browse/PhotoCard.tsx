@@ -5,9 +5,9 @@ import { useGroupsStore } from "../../store/groupsStore";
 import type { PhotoId, PhotoStatus } from "../../types/photo";
 
 import { CardActions } from "./CardActions";
-import { HeicPlaceholder } from "./HeicPlaceholder";
 import { QualityBadges } from "./QualityBadges";
 import { StatusPill } from "./StatusPill";
+import { ThumbImage } from "./ThumbImage";
 
 type PhotoCardProps = {
   id: PhotoId;
@@ -37,17 +37,7 @@ function PhotoCardImpl({ id, onCompare }: PhotoCardProps) {
         aria-label={`对比 ${photo.name}`}
         className="absolute inset-0 block focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
-        {photo.isHeic ? (
-          <HeicPlaceholder name={photo.name} />
-        ) : (
-          <img
-            src={photo.src}
-            alt={photo.name}
-            loading="lazy"
-            decoding="async"
-            className="h-full w-full object-cover"
-          />
-        )}
+        <ThumbImage photo={photo} />
       </button>
 
       <StatusPill status={photo.status} className="pointer-events-none absolute left-1.5 top-1.5" />

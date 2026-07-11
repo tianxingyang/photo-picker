@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 use tauri::{AppHandle, Manager};
@@ -11,6 +11,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0002_analysis.sql"),
     include_str!("../../migrations/0003_grouping.sql"),
     include_str!("../../migrations/0004_projects.sql"),
+    include_str!("../../migrations/0005_thumbnails.sql"),
 ];
 
 pub fn open(app_handle: &AppHandle) -> Result<Connection, DbErr> {
@@ -45,6 +46,24 @@ pub fn run_migrations(conn: &Connection) -> Result<(), DbErr> {
 fn db_path(app_handle: &AppHandle) -> Result<PathBuf, DbErr> {
     let dir = app_handle.path().app_data_dir()?;
     Ok(dir.join("photo-picker.db"))
+}
+
+/// Root of the persistent WebP thumbnail cache: `<app_data_dir>/thumbnails`.
+/// Per ARCHITECTURE.md, thumbnails live here (not OS temp) so they survive
+/// restarts. The actual per-photo file is laid out two levels deep — see
+/// [`thumb_dest`] — to avoid a single directory holding every photo's thumbnail.
+pub fn thumbnails_dir(app_handle: &AppHandle) -> Result<PathBuf, DbErr> {
+    let dir = app_handle.path().app_data_dir()?;
+    Ok(dir.join("thumbnails"))
+}
+
+/// Per-photo thumbnail path: `<thumbs_dir>/<id[0:2]>/<id>.webp`. The two-level
+/// fan-out (first two hex chars of the id) keeps any one directory small. `id`
+/// is `blake3(project_id + '\n' + path)` (64 hex chars), so the filename is
+/// already globally unique AND project-scoped — no per-project subdir needed.
+pub fn thumb_dest(thumbs_dir: &Path, id: &str) -> PathBuf {
+    let sub = &id[..2.min(id.len())];
+    thumbs_dir.join(sub).join(format!("{id}.webp"))
 }
 
 #[cfg(test)]
@@ -167,7 +186,12 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         // why: CASCADE only fires with foreign_keys ON (prod sets it in db::open).
         conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-        run_migrations(&conn).unwrap();
+        // Apply only 0001..0004 so the "at version 4" assertion stays meaningful
+        // as later migrations (0005+) are added on top.
+        for sql in &MIGRATIONS[0..4] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 4u32).unwrap();
 
         assert_eq!(
             user_version(&conn),
@@ -292,5 +316,54 @@ mod tests {
         // A second run is a no-op (every version <= current).
         run_migrations(&conn).unwrap();
         assert_eq!(user_version(&conn), MIGRATIONS.len() as u32);
+    }
+
+    #[test]
+    fn thumb_columns_build_at_version_5() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        run_migrations(&conn).unwrap();
+
+        // 0005 is the current latest migration.
+        assert_eq!(
+            user_version(&conn),
+            5,
+            "0005_thumbnails bumps user_version to 5"
+        );
+        assert_eq!(user_version(&conn), MIGRATIONS.len() as u32);
+
+        insert_project(&conn, "proj");
+        conn.execute(
+            "INSERT INTO photos (id, project_id, path, status, created_at) \
+             VALUES ('a', 'proj', '/x.jpg', 'pending', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        // thumb_status defaults to 'pending'; thumb_src_mtime / thumb_error are
+        // addressable and default to NULL (query would error if columns were absent).
+        let status: String = conn
+            .query_row("SELECT thumb_status FROM photos WHERE id = 'a'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "pending");
+        conn.query_row(
+            "SELECT thumb_src_mtime, thumb_error FROM photos WHERE id = 'a'",
+            [],
+            |r| {
+                let _: Option<i64> = r.get(0)?;
+                let _: Option<String> = r.get(1)?;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        // The CHECK constraint rejects an out-of-domain thumb_status.
+        let bad = conn.execute(
+            "UPDATE photos SET thumb_status = 'bogus' WHERE id = 'a'",
+            [],
+        );
+        assert!(bad.is_err(), "thumb_status CHECK rejects unknown values");
     }
 }

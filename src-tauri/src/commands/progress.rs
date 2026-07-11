@@ -17,13 +17,15 @@ pub const EVENT: &str = "pipeline://progress";
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProgressEvent {
-    pub phase: &'static str, // "import" | "analyze" | "group"
+    pub phase: &'static str, // "import" | "thumbnail" | "analyze" | "group"
     pub done: u32,
     pub total: Option<u32>,
     pub status: &'static str, // "running" | "done" | "cancelled" | "error"
 }
 
 pub const PHASE_IMPORT: &str = "import";
+/// Background WebP thumbnail pre-generation (runs after import, before analyze).
+pub const PHASE_THUMBNAIL: &str = "thumbnail";
 pub const PHASE_ANALYZE: &str = "analyze";
 pub const PHASE_GROUP: &str = "group";
 

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 
 // Mirrors the Rust `ProgressEvent` (commands/progress.rs), serde camelCase.
-export type ProgressPhase = "import" | "analyze" | "group";
+export type ProgressPhase = "import" | "thumbnail" | "analyze" | "group";
 export type ProgressStatus = "running" | "done" | "cancelled" | "error";
 
 export type Progress = {
@@ -20,7 +20,7 @@ type ProgressState = {
 
 export const useProgressStore = create<ProgressState>(() => ({ current: null }));
 
-const PHASES: readonly string[] = ["import", "analyze", "group"];
+const PHASES: readonly string[] = ["import", "thumbnail", "analyze", "group"];
 const STATUSES: readonly string[] = ["running", "done", "cancelled", "error"];
 
 function isProgress(v: unknown): v is Progress {

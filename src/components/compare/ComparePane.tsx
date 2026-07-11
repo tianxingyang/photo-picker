@@ -57,6 +57,8 @@ export function ComparePane({
       isBlurry: null,
       exposureFlag: null,
       analysisState: "pending",
+      thumbStatus: "pending",
+      thumbSrc: null,
     },
   );
 

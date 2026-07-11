@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust 侧质量门：clippy 无 warning、命令结构与既有一致、测试覆盖 stat 过滤判定表与取消语义"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "校验迁移 additive、user_version==MIGRATIONS.len()、索引/CHECK 约束规范"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "生成/失败/取消路径的日志规范"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量门：tsc 无误、lint 通过、thumbSrc 空安全与 onError 回退"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "复核 DB→Rust→TS thumb 字段跨层一致、无契约漂移"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "确认确实复用了 transcode/analyze 模式、无重复造轮子"}
