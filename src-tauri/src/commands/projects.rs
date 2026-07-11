@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -157,9 +159,13 @@ pub async fn delete_project(
     // project's cache. A remove failure (already gone, never generated) must not
     // fail the already-committed delete.
     if let Ok(thumbs_dir) = crate::db::thumbnails_dir(&app) {
-        for id in &photo_ids {
-            let _ = std::fs::remove_file(crate::db::thumb_dest(&thumbs_dir, id));
-        }
+        // why: filesystem work is proportional to project size and must not
+        // block the async runtime. The DB delete is already committed, so cache
+        // cleanup remains best-effort even if the blocking task cannot join.
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            purge_thumbnail_files(&thumbs_dir, &photo_ids);
+        })
+        .await;
     }
 
     // why: if we just deleted the open project, drop the dangling current id so
@@ -223,6 +229,15 @@ fn select_photo_ids(conn: &Connection, project_id: &str) -> rusqlite::Result<Vec
     let mut stmt = conn.prepare_cached("SELECT id FROM photos WHERE project_id = ?1")?;
     let rows = stmt.query_map(params![project_id], |r| r.get::<_, String>(0))?;
     rows.collect()
+}
+
+/// Remove the selected thumbnail cache files. Missing files and per-file IO
+/// failures are ignored because the project row has already been deleted.
+fn purge_thumbnail_files(thumbs_dir: &Path, photo_ids: &[String]) {
+    for id in photo_ids {
+        // why: cache cleanup is best-effort and must not undo a committed DB delete.
+        let _ = std::fs::remove_file(crate::db::thumb_dest(thumbs_dir, id));
+    }
 }
 
 #[cfg(test)]
@@ -347,5 +362,27 @@ mod tests {
             .query_row("SELECT project_id FROM photos", [], |r| r.get(0))
             .unwrap();
         assert_eq!(owner, "p2");
+    }
+
+    #[test]
+    fn purge_thumbnail_files_removes_selected_files_and_ignores_missing() {
+        let root =
+            std::env::temp_dir().join(format!("photo-picker-thumbnail-cleanup-{}", Uuid::new_v4()));
+        let remove_id = "aa-remove".to_string();
+        let keep_id = "bb-keep".to_string();
+        let missing_id = "cc-missing".to_string();
+        let remove_path = crate::db::thumb_dest(&root, &remove_id);
+        let keep_path = crate::db::thumb_dest(&root, &keep_id);
+
+        std::fs::create_dir_all(remove_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(keep_path.parent().unwrap()).unwrap();
+        std::fs::write(&remove_path, b"webp").unwrap();
+        std::fs::write(&keep_path, b"webp").unwrap();
+
+        purge_thumbnail_files(&root, &[remove_id, missing_id]);
+
+        assert!(!remove_path.exists(), "selected thumbnail is removed");
+        assert!(keep_path.exists(), "unselected thumbnail is preserved");
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

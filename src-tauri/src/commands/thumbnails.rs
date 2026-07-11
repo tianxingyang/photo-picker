@@ -165,7 +165,12 @@ pub async fn generate_thumbnails(
                     }
                 };
                 let dest = thumb_dest(&thumbs_dir, &row.id);
-                if needs_regen(&row.thumb_status, row.thumb_src_mtime, cur_mtime, dest.exists()) {
+                if needs_regen(
+                    &row.thumb_status,
+                    row.thumb_src_mtime,
+                    cur_mtime,
+                    dest.exists(),
+                ) {
                     worklist.push(WorkItem {
                         id: row.id,
                         path: row.path,
@@ -282,7 +287,12 @@ pub fn cancel_thumbnails(state: State<'_, AppState>) {
 ///   edit) → self-heal.
 /// - `failed`: only if the source mtime changed; an unchanged bad file is not
 ///   retried every run.
-fn needs_regen(thumb_status: &str, stored_mtime: Option<i64>, cur_mtime: i64, dest_exists: bool) -> bool {
+fn needs_regen(
+    thumb_status: &str,
+    stored_mtime: Option<i64>,
+    cur_mtime: i64,
+    dest_exists: bool,
+) -> bool {
     match thumb_status {
         "done" => !dest_exists || stored_mtime != Some(cur_mtime),
         "failed" => stored_mtime != Some(cur_mtime),
@@ -469,7 +479,10 @@ mod tests {
 
         persist_thumb(&conn, "a", Ok(()), 1_700_000_000_000_000_000).unwrap();
 
-        assert_eq!(col_text(&conn, "a", "thumb_status").as_deref(), Some("done"));
+        assert_eq!(
+            col_text(&conn, "a", "thumb_status").as_deref(),
+            Some("done")
+        );
         assert_eq!(
             col_i64(&conn, "a", "thumb_src_mtime"),
             Some(1_700_000_000_000_000_000)
@@ -522,7 +535,10 @@ mod tests {
         persist_thumb(&conn, "c", Err("boom".into()), 0).unwrap();
         // a later successful run must clear the stale error.
         persist_thumb(&conn, "c", Ok(()), 42).unwrap();
-        assert_eq!(col_text(&conn, "c", "thumb_status").as_deref(), Some("done"));
+        assert_eq!(
+            col_text(&conn, "c", "thumb_status").as_deref(),
+            Some("done")
+        );
         assert_eq!(col_text(&conn, "c", "thumb_error"), None);
         assert_eq!(col_i64(&conn, "c", "thumb_src_mtime"), Some(42));
     }

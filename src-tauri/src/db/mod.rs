@@ -325,7 +325,11 @@ mod tests {
         run_migrations(&conn).unwrap();
 
         // 0005 is the current latest migration.
-        assert_eq!(user_version(&conn), 5, "0005_thumbnails bumps user_version to 5");
+        assert_eq!(
+            user_version(&conn),
+            5,
+            "0005_thumbnails bumps user_version to 5"
+        );
         assert_eq!(user_version(&conn), MIGRATIONS.len() as u32);
 
         insert_project(&conn, "proj");

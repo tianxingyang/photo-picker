@@ -67,12 +67,24 @@ export function App() {
     }
   }
 
+  async function runAnalysisAndGrouping(): Promise<void> {
+    const summary = await analyzePending();
+    // why: a user cancel leaves photos pending — don't auto-group partial data.
+    if (summary.cancelled) {
+      setNotice("分析已取消，未进行分组");
+      return;
+    }
+    await groupPhotos();
+    await loadGroups();
+  }
+
   async function onImport() {
     if (busy) return;
     setError(null);
     setNotice(null);
     setFailures([]);
     setBusy(true);
+    let stage: "import" | "analysis" = "import";
     try {
       const folder = await pickFolder();
       if (folder === null) return;
@@ -92,15 +104,30 @@ export function App() {
       // to the cheap thumbnails. Awaited (keeps `busy`) so it can't overlap an
       // analyze batch on the shared sidecar pool. Best-effort: a thumbnail
       // failure must not fail the import — the grid keeps showing originals.
+      let thumbnailsCancelled = false;
       try {
         const t = await generateThumbnails();
         if (t.generated > 0) await loadGroups();
+        thumbnailsCancelled = t.cancelled;
       } catch (e) {
         if (import.meta.env.DEV) console.debug("generateThumbnails failed", e);
       }
+      // Treat the progress-bar cancel as cancelling the remaining automatic
+      // pipeline too; an infrastructure failure above stays best-effort and
+      // still allows analysis to proceed using the original files.
+      if (thumbnailsCancelled) {
+        setNotice("缩略图生成已取消，未进行分析");
+        return;
+      }
+      stage = "analysis";
+      await runAnalysisAndGrouping();
     } catch (e) {
       const { kind, message } = describeAppError(e);
-      setError(kind === "NotFound" ? `目录无效：${message}` : `导入失败：${message}`);
+      if (stage === "analysis") {
+        setError(`分析/分组失败：${message}`);
+      } else {
+        setError(kind === "NotFound" ? `目录无效：${message}` : `导入失败：${message}`);
+      }
     } finally {
       setBusy(false);
     }
@@ -113,14 +140,7 @@ export function App() {
     setFailures([]);
     setBusy(true);
     try {
-      const summary = await analyzePending();
-      // why: a user cancel leaves photos pending — don't auto-group partial data.
-      if (summary.cancelled) {
-        setNotice("分析已取消，未进行分组");
-        return;
-      }
-      await groupPhotos();
-      await loadGroups();
+      await runAnalysisAndGrouping();
     } catch (e) {
       const { message } = describeAppError(e);
       setError(`分析/分组失败：${message}`);

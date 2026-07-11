@@ -229,13 +229,14 @@ pub async fn list_groups(
     // Browse only the open project's photos and groups.
     let project_id = current_project(&state)?;
     let db = state.db.clone();
-    let mut model = tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<BrowseModel> {
-        let conn = db.blocking_lock();
-        load_browse_model(&conn, &project_id)
-    })
-    .await
-    .map_err(|e| AppError::Io(e.to_string()))?
-    .map_err(|e| AppError::Db(e.to_string()))?;
+    let mut model =
+        tauri::async_runtime::spawn_blocking(move || -> rusqlite::Result<BrowseModel> {
+            let conn = db.blocking_lock();
+            load_browse_model(&conn, &project_id)
+        })
+        .await
+        .map_err(|e| AppError::Io(e.to_string()))?
+        .map_err(|e| AppError::Db(e.to_string()))?;
 
     // why: resolve each ready thumbnail's absolute path here (needs the AppHandle
     // for app_data_dir, which the spawn_blocking DB closure doesn't have).
